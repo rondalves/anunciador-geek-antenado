@@ -71,9 +71,17 @@ app.get("/api/fotos", async (req, res) => {
   } catch (e) { res.status(400).json({ ok: false, erro: e.message }); }
 });
 
-const baixarDrive = async (id) => {
+const baixarDrive = async (id, tentativa = 1) => {
   const r = await fetch(`https://www.googleapis.com/drive/v3/files/${id}?alt=media&key=${DRIVE_KEY}`);
-  if (!r.ok) throw new Error("não consegui baixar a imagem do Drive");
+  if (!r.ok) {
+    // pode ser instabilidade passageira (rede/cota) — tenta mais uma vez antes de desistir
+    if (tentativa === 1) { await new Promise(res => setTimeout(res, 800)); return baixarDrive(id, 2); }
+    const corpo = await r.text().catch(() => "");
+    let motivo = corpo;
+    try { motivo = JSON.parse(corpo)?.error?.message || corpo; } catch { /* mantém texto cru */ }
+    const dica = r.status === 403 ? " — confira se a pasta está compartilhada como \"Qualquer pessoa com o link\" no Drive" : "";
+    throw new Error(`Drive recusou o arquivo ${id} (HTTP ${r.status}): ${motivo.slice(0, 200) || "sem detalhes"}${dica}`);
+  }
   return { buf: Buffer.from(await r.arrayBuffer()), tipo: r.headers.get("content-type") || "image/jpeg" };
 };
 
@@ -81,7 +89,7 @@ app.get("/img/:id", async (req, res) => {
   try {
     const { buf, tipo } = await baixarDrive(req.params.id);
     res.set({ "Content-Type": tipo, "Cache-Control": "public, max-age=86400" }).send(buf);
-  } catch { res.status(404).send("imagem nao encontrada"); }
+  } catch (e) { res.status(404).send("imagem nao encontrada: " + e.message); }
 });
 
 /* ---------- Shopify (OAuth, mesmo padrão do Mercado Livre) ---------- */
