@@ -40,7 +40,11 @@ const ML_REFRESH_SEED = env.ML_REFRESH_TOKEN || "";
 const ANTHROPIC_KEY = env.ANTHROPIC_API_KEY || "";
 const MODELO = env.ANTHROPIC_MODEL || "claude-sonnet-4-6";
 const GEMINI_KEY = env.GEMINI_API_KEY || "";
-const GEMINI_MODEL = env.GEMINI_MODEL || "gemini-2.0-flash";
+// GEMINI_MODEL é só a PRIMEIRA tentativa. O Google aposenta modelo sem avisar —
+// gemini-2.0-flash foi removido — então a lista abaixo segue adiante sozinha.
+// Testados um a um nesta conta em 21/09/2026 com generateContent real.
+const GEMINI_MODELOS = [...new Set([env.GEMINI_MODEL, "gemini-3.8-flash", "gemini-3.6-flash", "gemini-flash-latest"].filter(Boolean))];
+let geminiModeloOk = ""; // último modelo que respondeu; aparece em /api/status
 
 const TOKEN_FILE = path.join(DATA, "ml_token.json");
 const LOG_FILE = path.join(DATA, "publicados.json");
@@ -272,13 +276,40 @@ async function mlCategorias(token, texto) {
     lista = (await mlApi(`/sites/${ML_SITE}/domain_discovery/search?limit=5&q=${q}`, token))
       .map(x => ({ id: x.category_id, nome: x.category_name, dominio: x.domain_name }));
   } catch { }
+  // 2ª via: em que categoria estão os anúncios reais desse produto.
+  // O antigo /category_predictor/predict foi removido pelo ML (404) — não adianta chamar.
   if (!lista.length) {
     try {
-      const p = await mlApi(`/sites/${ML_SITE}/category_predictor/predict?title=${q}`, token);
-      if (p?.id) lista = [{ id: p.id, nome: p.name, dominio: null }];
+      const r = await mlApi(`/sites/${ML_SITE}/search?limit=20&q=${q}`, token);
+      const conta = new Map();
+      for (const it of r.results || []) if (it.category_id) conta.set(it.category_id, (conta.get(it.category_id) || 0) + 1);
+      for (const [id] of [...conta.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3)) {
+        const c = await mlApi(`/categories/${id}`, token).catch(() => null);
+        if (c) lista.push({ id, nome: c.name, dominio: null });
+      }
     } catch { }
   }
   return lista;
+}
+
+// o ML só aceita anúncio em categoria FOLHA que permita publicar — categoria de galho é recusada
+async function validarCategoria(token, id, texto) {
+  const folhaOk = async (cid) => {
+    if (!cid) return null;
+    try {
+      const c = await mlApi(`/categories/${cid}`, token);
+      if ((c.children_categories || []).length) return null;
+      if (c.settings?.listing_allowed === false) return null;
+      return { id: cid, nome: c.name };
+    } catch { return null; }
+  };
+  const escolhida = await folhaOk(id);
+  if (escolhida) return escolhida;
+  for (const s of await mlCategorias(token, texto)) {
+    const c = await folhaOk(s.id);
+    if (c) return c;
+  }
+  return null;
 }
 
 async function detalhesCategoria(token, id) {
@@ -302,17 +333,44 @@ async function detalhesCategoria(token, id) {
 // (cada categoria do ML pede coisas diferentes — voltagem, cor, linha etc. — sem isso a publicação é recusada)
 // fala com a IA disponível: Gemini primeiro (gratuito, com busca no Google embutida),
 // Anthropic como alternativa só se GEMINI_API_KEY não estiver configurada
+// modelo aposentado (404) ou sobrecarregado (503/429): o próximo da lista costuma atender.
+// erro de chave ou de prompt não melhora trocando de modelo — nesses não adianta insistir.
+const MODELO_SUMIU = /not found|no longer available|not supported|unsupported|does not exist|deprecated/i;
+const MODELO_LOTADO = /high demand|overloaded|try again later|rate limit|quota|resource has been exhausted|unavailable/i;
+const trocarDeModelo = (status, msg) =>
+  status === 404 || status === 429 || status === 500 || status === 503 ||
+  MODELO_SUMIU.test(msg) || MODELO_LOTADO.test(msg);
+
 async function chamarIA(prompt) {
   if (GEMINI_KEY) {
-    const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_KEY}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], tools: [{ google_search: {} }] })
-    });
-    const j = await r.json();
-    if (j.error) throw new Error(j.error.message || "erro na API do Gemini");
-    const partes = j.candidates?.[0]?.content?.parts || [];
-    return partes.map(p => p.text || "").join("\n");
+    let ultimoErro = "";
+    // medido em 21/09/2026: o Gemini recusou seis vezes seguidas antes de atender.
+    // 2 voltas é o meio-termo entre aguentar pico e não queimar a cota do tier gratuito.
+    for (let volta = 0; volta < 2; volta++) {
+      if (volta) await new Promise(r => setTimeout(r, 8000));
+      let transitorio = false;
+      for (const modelo of GEMINI_MODELOS) {
+        const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${modelo}:generateContent?key=${GEMINI_KEY}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], tools: [{ google_search: {} }] })
+        });
+        const j = await r.json().catch(() => ({}));
+        if (!j.error) {
+          if (geminiModeloOk !== modelo) console.log(`[IA] Gemini respondendo pelo modelo ${modelo}`);
+          geminiModeloOk = modelo;
+          const partes = j.candidates?.[0]?.content?.parts || [];
+          return partes.map(p => p.text || "").join("\n");
+        }
+        ultimoErro = j.error.message || `HTTP ${r.status}`;
+        if (!trocarDeModelo(r.status, ultimoErro)) { volta = 99; break; }
+        if (MODELO_LOTADO.test(ultimoErro)) transitorio = true;
+        console.warn(`[IA] modelo ${modelo} indisponível (${ultimoErro.slice(0, 120)}) — tentando o próximo`);
+      }
+      if (!transitorio) break; // todos aposentados de vez: repetir não muda nada
+    }
+    if (!ANTHROPIC_KEY) throw new Error("Gemini: " + ultimoErro);
+    console.warn("[IA] Gemini indisponível, caindo para Anthropic:", ultimoErro.slice(0, 160));
   }
   if (ANTHROPIC_KEY) {
     const r = await fetch("https://api.anthropic.com/v1/messages", {
@@ -353,10 +411,16 @@ Se o atributo tiver opções de id listadas, responda com o id exato de uma dela
 Responda SÓ com JSON entre ===INICIO_JSON=== e ===FIM_JSON===, no formato {"ID_DO_ATRIBUTO":"valor_ou_id"} para cada atributo acima.`;
   try {
     const valores = extrairJSON(await chamarIA(prompt));
+    const norm = (s) => String(s).toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").trim();
     return faltando.map(a => {
       const v = valores[a.id]; if (!v) return null;
-      const bate = a.valores.find(x => x.id === v);
-      return bate ? { id: a.id, value_id: bate.id } : { id: a.id, value_name: String(v) };
+      // a IA às vezes devolve o nome ("127/220V") em vez do id — aceita os dois
+      const bate = a.valores.find(x => x.id === v)
+        || a.valores.find(x => norm(x.nome) === norm(v))
+        || a.valores.find(x => norm(x.nome).includes(norm(v)) || norm(v).includes(norm(x.nome)));
+      if (bate) return { id: a.id, value_id: bate.id, value_name: bate.nome };
+      // se a categoria tem lista fechada e nada bateu, mandar texto livre é recusa certa
+      return a.valores.length ? null : { id: a.id, value_name: String(v) };
     }).filter(Boolean);
   } catch { return []; } // sem IA disponível ou falhou, segue sem — o ML vai listar o que falta no erro
 }
@@ -608,20 +672,17 @@ async function publicarUm(job, b, ctx) {
       const token = await mlToken();
 
       etapa("Definindo categoria");
-      let categoria = b.categoriaML;
-      if (!categoria) {
-        const sug = await mlCategorias(token, [p.tituloML, p.marca, p.modelo].filter(Boolean).join(" "));
-        categoria = sug[0]?.id;
-        if (categoria) out.avisos.push(`Categoria escolhida automaticamente: ${sug[0].nome} (${categoria})`);
-      }
-      if (!categoria) throw new Error("não consegui identificar a categoria — descreva melhor o produto no título");
+      const cat = await validarCategoria(token, b.categoriaML, [p.tituloML, p.marca, p.modelo].filter(Boolean).join(" "));
+      if (!cat) throw new Error("não consegui identificar uma categoria válida do ML — descreva melhor o produto no título");
+      const categoria = cat.id;
+      if (categoria !== b.categoriaML) out.avisos.push(`Categoria escolhida automaticamente: ${cat.nome} (${categoria})`);
 
       etapa("Conferindo atributos obrigatórios da categoria");
       let atributosIA = [];
       try {
         const det = await detalhesCategoria(token, categoria);
         atributosIA = await preencherAtributosComIA(p.tituloML, p.marca, p.modelo, det.atributos);
-        if (atributosIA.length) out.avisos.push(`Atributos preenchidos automaticamente: ${atributosIA.map(a => a.id).join(", ")}`);
+        if (atributosIA.length) out.avisos.push(`Atributos preenchidos automaticamente: ${atributosIA.map(a => a.id).join(", ")} (modelo ${geminiModeloOk || MODELO})`);
       } catch (e) { out.avisos.push("Não consegui checar atributos da categoria antes: " + e.message.slice(0, 120)); }
 
       const pictures = [];
@@ -641,7 +702,8 @@ async function publicarUm(job, b, ctx) {
       ];
       const corpo = {
         category_id: categoria, price: p.precoML, currency_id: "BRL",
-        available_quantity: p.estoque, buying_mode: "buy_it_now", condition: "used",
+        available_quantity: p.estoque, buying_mode: "buy_it_now",
+        condition: b.usado === false ? "new" : "used", // o checkbox do painel era coletado e ignorado aqui
         listing_type_id: "gold_special", pictures, attributes,
         shipping: { mode: "me2", local_pick_up: false, free_shipping: !!b.freteGratis },
         sale_terms: [
@@ -678,7 +740,7 @@ async function publicarUm(job, b, ctx) {
 
 app.get("/api/historico", (_, res) => res.json(readJson(LOG_FILE, []).slice(0, 20)));
 app.get("/api/status", async (_, res) => {
-  const s = { shopify: false, drive: false, ia: !!(GEMINI_KEY || ANTHROPIC_KEY), iaProvedor: GEMINI_KEY ? "Gemini" : (ANTHROPIC_KEY ? "Anthropic" : null), ml: false, pastaPadrao: DEFAULT_FOLDER, erros: {} };
+  const s = { shopify: false, drive: false, ia: !!(GEMINI_KEY || ANTHROPIC_KEY), iaProvedor: GEMINI_KEY ? `Gemini (${geminiModeloOk || GEMINI_MODELOS[0]})` : (ANTHROPIC_KEY ? `Anthropic (${MODELO})` : null), ml: false, pastaPadrao: DEFAULT_FOLDER, erros: {} };
   s.diagnostico = {
     arquivoTokenML: fs.existsSync(TOKEN_FILE),
     arquivoTokenShopify: fs.existsSync(SHOP_TOKEN_FILE),
@@ -706,3 +768,5 @@ app.get("/api/status", async (_, res) => {
 });
 
 app.listen(PORT, () => console.log(`anunciador em ${BASE_URL}`));
+// expostos para scripts/teste-ml.mjs — nao muda o comportamento do app
+export { validarCategoria, detalhesCategoria, preencherAtributosComIA, chamarIA, extrairJSON };
