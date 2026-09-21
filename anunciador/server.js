@@ -341,51 +341,74 @@ const trocarDeModelo = (status, msg) =>
   status === 404 || status === 429 || status === 500 || status === 503 ||
   MODELO_SUMIU.test(msg) || MODELO_LOTADO.test(msg);
 
-async function chamarIA(prompt) {
-  if (GEMINI_KEY) {
-    let ultimoErro = "";
-    // medido em 21/09/2026: o Gemini recusou seis vezes seguidas antes de atender.
-    // 2 voltas é o meio-termo entre aguentar pico e não queimar a cota do tier gratuito.
-    for (let volta = 0; volta < 2; volta++) {
-      if (volta) await new Promise(r => setTimeout(r, 8000));
-      let transitorio = false;
-      for (const modelo of GEMINI_MODELOS) {
-        const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${modelo}:generateContent?key=${GEMINI_KEY}`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], tools: [{ google_search: {} }] })
-        });
-        const j = await r.json().catch(() => ({}));
-        if (!j.error) {
-          if (geminiModeloOk !== modelo) console.log(`[IA] Gemini respondendo pelo modelo ${modelo}`);
-          geminiModeloOk = modelo;
-          const partes = j.candidates?.[0]?.content?.parts || [];
-          return partes.map(p => p.text || "").join("\n");
-        }
-        ultimoErro = j.error.message || `HTTP ${r.status}`;
-        if (!trocarDeModelo(r.status, ultimoErro)) { volta = 99; break; }
-        if (MODELO_LOTADO.test(ultimoErro)) transitorio = true;
-        console.warn(`[IA] modelo ${modelo} indisponível (${ultimoErro.slice(0, 120)}) — tentando o próximo`);
+// no tier gratuito o 429 é por minuto e o próprio Google diz quanto esperar
+const esperaSugerida = (erro) => {
+  for (const d of erro?.details || []) {
+    const s = parseFloat(String(d.retryDelay || "").replace("s", ""));
+    if (s > 0) return Math.min(s + 1, 45) * 1000; // teto de 45s: acima disso a publicação trava demais
+  }
+  return 0;
+};
+
+async function chamarGemini(prompt) {
+  let ultimoErro = "";
+  for (let volta = 0; volta < 3; volta++) {
+    let esperar = 0;
+    for (const modelo of GEMINI_MODELOS) {
+      const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${modelo}:generateContent?key=${GEMINI_KEY}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], tools: [{ google_search: {} }] })
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!j.error) {
+        if (geminiModeloOk !== modelo) console.log(`[IA] Gemini respondendo pelo modelo ${modelo}`);
+        geminiModeloOk = modelo;
+        return (j.candidates?.[0]?.content?.parts || []).map(p => p.text || "").join("\n");
       }
-      if (!transitorio) break; // todos aposentados de vez: repetir não muda nada
+      ultimoErro = j.error.message || `HTTP ${r.status}`;
+      if (!trocarDeModelo(r.status, ultimoErro)) throw new Error(ultimoErro); // chave/prompt: trocar não resolve
+      if (MODELO_LOTADO.test(ultimoErro)) esperar = Math.max(esperar, esperaSugerida(j.error) || 10000);
+      console.warn(`[IA] modelo ${modelo} indisponível (${ultimoErro.slice(0, 120)}) — tentando o próximo`);
     }
-    if (!ANTHROPIC_KEY) throw new Error("Gemini: " + ultimoErro);
-    console.warn("[IA] Gemini indisponível, caindo para Anthropic:", ultimoErro.slice(0, 160));
+    if (!esperar) break; // todos aposentados de vez: repetir não muda nada
+    console.warn(`[IA] todos os modelos lotados — esperando ${Math.round(esperar / 1000)}s antes de tentar de novo`);
+    await new Promise(r => setTimeout(r, esperar));
+  }
+  throw new Error(ultimoErro);
+}
+
+async function chamarAnthropic(prompt) {
+  const r = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "x-api-key": ANTHROPIC_KEY, "anthropic-version": "2023-06-01" },
+    body: JSON.stringify({
+      model: MODELO, max_tokens: 1800,
+      tools: [{ type: "web_search_20250305", name: "web_search" }],
+      messages: [{ role: "user", content: prompt }]
+    })
+  });
+  const j = await r.json();
+  if (j.error) throw new Error(j.error.message || "erro na API da Anthropic");
+  return (j.content || []).filter(c => c.type === "text").map(c => c.text).join("\n");
+}
+
+async function chamarIA(prompt) {
+  let erroGemini = "";
+  if (GEMINI_KEY) {
+    try { return await chamarGemini(prompt); }
+    catch (e) { erroGemini = e.message; console.warn("[IA] Gemini falhou:", erroGemini.slice(0, 200)); }
   }
   if (ANTHROPIC_KEY) {
-    const r = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "x-api-key": ANTHROPIC_KEY, "anthropic-version": "2023-06-01" },
-      body: JSON.stringify({
-        model: MODELO, max_tokens: 1800,
-        tools: [{ type: "web_search_20250305", name: "web_search" }],
-        messages: [{ role: "user", content: prompt }]
-      })
-    });
-    const j = await r.json();
-    if (j.error) throw new Error(j.error.message || "erro na API da Anthropic");
-    return (j.content || []).filter(c => c.type === "text").map(c => c.text).join("\n");
+    try { return await chamarAnthropic(prompt); }
+    catch (e) {
+      // sem os dois lados o aviso na tela não diz nada útil sobre por que a IA não respondeu
+      throw new Error(erroGemini
+        ? `Gemini: ${erroGemini.slice(0, 200)} || Anthropic: ${e.message.slice(0, 200)}`
+        : e.message);
+    }
   }
+  if (erroGemini) throw new Error("Gemini: " + erroGemini);
   throw new Error("Nenhuma IA configurada — preencha GEMINI_API_KEY (grátis) no .env");
 }
 
@@ -422,7 +445,11 @@ Responda SÓ com JSON entre ===INICIO_JSON=== e ===FIM_JSON===, no formato {"ID_
       // se a categoria tem lista fechada e nada bateu, mandar texto livre é recusa certa
       return a.valores.length ? null : { id: a.id, value_name: String(v) };
     }).filter(Boolean);
-  } catch { return []; } // sem IA disponível ou falhou, segue sem — o ML vai listar o que falta no erro
+  } catch (e) {
+    // deixa subir: engolir aqui fazia a publicação morrer depois com "[VOLTAGE] required"
+    // sem dizer que a causa foi a IA não ter respondido
+    throw new Error(`IA não preencheu ${faltando.map(a => a.id).join(", ")} — ${e.message}`);
+  }
 }
 
 // categoriza sozinho a partir do título e já devolve a ficha da categoria
@@ -683,7 +710,7 @@ async function publicarUm(job, b, ctx) {
         const det = await detalhesCategoria(token, categoria);
         atributosIA = await preencherAtributosComIA(p.tituloML, p.marca, p.modelo, det.atributos);
         if (atributosIA.length) out.avisos.push(`Atributos preenchidos automaticamente: ${atributosIA.map(a => a.id).join(", ")} (modelo ${geminiModeloOk || MODELO})`);
-      } catch (e) { out.avisos.push("Não consegui checar atributos da categoria antes: " + e.message.slice(0, 120)); }
+      } catch (e) { out.avisos.push("Atributos da categoria: " + e.message.slice(0, 300)); }
 
       const pictures = [];
       for (const [i, url] of fotos.entries()) {
