@@ -9,236 +9,85 @@
 <link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700&family=Archivo+Black&display=swap" rel="stylesheet">
 <style>
 :root{
-  --fundo:#0c0e12; --painel:#151920; --painel2:#1b2029; --linha:#2a313c;
+  --fundo:#0c0e12; --painel:#161a21; --linha:#2a313c;
   --ciano:#2ee6d6; --amarelo:#ffd426; --verde:#4ade80; --erro:#ff6f61;
-  --texto:#eef2f7; --suave:#93a0b0;
-  box-sizing:border-box;
-  padding-top:env(safe-area-inset-top,0); padding-bottom:env(safe-area-inset-bottom,0);
+  --texto:#eef2f7; --suave:#8b96a5;
+  box-sizing:border-box; padding-top:env(safe-area-inset-top,0); padding-bottom:env(safe-area-inset-bottom,0);
 }
 *,*::before,*::after{box-sizing:inherit}
-body{margin:0;background:var(--fundo);color:var(--texto);font-family:Archivo,system-ui,sans-serif;font-size:15px;line-height:1.5}
-a{color:var(--ciano)}
-header{position:sticky;top:env(safe-area-inset-top,0);z-index:5;background:rgba(12,14,18,.94);
-  backdrop-filter:blur(8px);border-bottom:1px solid var(--linha);padding:14px 22px}
-.topo{display:flex;align-items:baseline;gap:14px;flex-wrap:wrap;max-width:1180px;margin:0 auto}
-h1{font-family:"Archivo Black";font-size:22px;margin:0;letter-spacing:-.02em}
+body{margin:0;background:var(--fundo);color:var(--texto);font-family:Archivo,system-ui,sans-serif;
+  min-height:100vh;display:flex;flex-direction:column;align-items:center;padding:32px 18px}
+h1{font-family:"Archivo Black";font-size:24px;margin:0 0 2px;letter-spacing:-.02em;text-align:center}
 h1 em{font-style:normal;color:var(--ciano)}
-#conexoes{margin-left:auto;font-size:12.5px;color:var(--suave);display:flex;gap:12px;flex-wrap:wrap}
+#conexoes{font-size:12.5px;color:var(--suave);display:flex;gap:12px;flex-wrap:wrap;justify-content:center;margin-bottom:26px}
 .pino{display:inline-flex;align-items:center;gap:5px}
 .pino i{width:7px;height:7px;border-radius:50%;background:var(--erro);display:inline-block}
 .pino.on i{background:var(--verde)}
-.trilha{max-width:1180px;margin:12px auto 0;display:flex;gap:6px}
-.trilha div{flex:1;height:3px;border-radius:2px;background:var(--linha);transition:background .25s}
-.trilha div.feito{background:var(--ciano)}
-main{max-width:1180px;margin:0 auto;padding:22px;display:grid;grid-template-columns:minmax(0,1.35fr) minmax(0,1fr);gap:22px;align-items:start}
-.cartao{background:var(--painel);border:1px solid var(--linha);border-radius:14px;padding:22px}
-.cartao+.cartao{margin-top:18px}
-h2{font-size:17px;margin:0 0 4px;font-weight:600}
-.sub{color:var(--suave);font-size:13.5px;margin:0 0 16px}
-label{display:block;font-size:12.5px;color:var(--suave);margin:12px 0 5px}
-input,select,textarea{width:100%;background:#0a0c10;border:1px solid var(--linha);color:var(--texto);
-  border-radius:9px;padding:10px 12px;font:inherit;font-size:14.5px}
-input:focus,select:focus,textarea:focus{outline:none;border-color:var(--ciano);box-shadow:0 0 0 3px rgba(46,230,214,.15)}
-textarea{min-height:110px;resize:vertical}
+a{color:var(--ciano)}
+.cartao{background:var(--painel);border:1px solid var(--linha);border-radius:16px;padding:26px;width:100%;max-width:480px}
+label{display:block;font-size:12.5px;color:var(--suave);margin:16px 0 6px}
+label:first-child{margin-top:0}
+input{width:100%;background:#0a0c10;border:1px solid var(--linha);color:var(--texto);
+  border-radius:10px;padding:13px 14px;font:inherit;font-size:16px}
+input:focus{outline:none;border-color:var(--ciano);box-shadow:0 0 0 3px rgba(46,230,214,.15)}
 .duo{display:grid;grid-template-columns:1fr 1fr;gap:12px}
-.trio{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px}
-button{font:inherit;font-weight:500;border-radius:9px;border:1px solid var(--linha);background:var(--painel2);
-  color:var(--texto);padding:10px 16px;cursor:pointer;transition:.15s}
-button:hover:not(:disabled){border-color:var(--ciano);color:var(--ciano)}
-button:disabled{opacity:.45;cursor:not-allowed}
-.acao{background:var(--amarelo);border-color:var(--amarelo);color:#15181d;font-weight:700}
-.acao:hover:not(:disabled){filter:brightness(1.08);color:#15181d;border-color:var(--amarelo)}
-.rodape{display:flex;gap:10px;justify-content:space-between;margin-top:22px;padding-top:18px;border-top:1px solid var(--linha)}
-.grade{display:grid;grid-template-columns:repeat(auto-fill,minmax(104px,1fr));gap:10px;margin-top:14px;
-  max-height:340px;overflow:auto}
-.foto{position:relative;border:2px solid var(--linha);border-radius:10px;overflow:hidden;cursor:pointer;aspect-ratio:1;background:#000}
-.foto img{width:100%;height:100%;object-fit:cover;display:block;opacity:.75;transition:.15s}
-.foto.on{border-color:var(--ciano)}
-.foto.on img{opacity:1}
-.foto b{position:absolute;top:5px;left:5px;background:var(--ciano);color:#062b28;font-size:12px;font-weight:700;
-  width:21px;height:21px;border-radius:50%;display:grid;place-items:center}
-.foto span{position:absolute;inset:auto 0 0 0;background:rgba(0,0,0,.75);font-size:10px;padding:3px 5px;
-  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.dica{font-size:12.5px;color:var(--suave);margin-top:10px}
+.precoLinha{position:relative}
+.precoLinha span{position:absolute;left:14px;top:50%;transform:translateY(-1px);color:var(--suave);
+  font-size:16px;pointer-events:none}
+.precoLinha input{padding-left:38px}
+.dica{font-size:12px;color:var(--suave);margin-top:6px}
+.check{display:flex;align-items:center;gap:9px;margin:18px 0 4px;font-size:14.5px}
+.check input{width:auto}
+button{font:inherit;font-weight:700;border-radius:12px;border:none;cursor:pointer}
+.anunciar{background:var(--amarelo);color:#15181d;width:100%;padding:17px;font-size:17px;margin-top:22px}
+.anunciar:hover:not(:disabled){filter:brightness(1.07)}
+.anunciar:disabled{opacity:.5;cursor:not-allowed}
+.historico{width:100%;max-width:480px;margin-top:18px;font-size:12.5px;color:var(--suave)}
+.historico div{padding:5px 0;border-bottom:1px solid var(--linha)}
 .ruim{color:var(--erro)} .bom{color:var(--verde)}
-.preco{font-family:"Archivo Black";font-size:40px;color:var(--amarelo);line-height:1.05}
-.previa{font-size:14px} .previa ul{padding-left:20px;margin:8px 0}
-.chip{display:inline-block;background:var(--painel2);border:1px solid var(--linha);border-radius:999px;
-  padding:4px 11px;font-size:12.5px;margin:0 6px 6px 0;cursor:pointer}
-.chip.on{border-color:var(--ciano);color:var(--ciano)}
-.linhaCheck{display:flex;align-items:center;gap:9px;margin:10px 0;font-size:14.5px}
-.linhaCheck input{width:auto}
-.item{display:flex;gap:10px;align-items:center;border:1px solid var(--linha);border-radius:10px;padding:9px 11px;margin-bottom:8px}
-.item img{width:38px;height:38px;object-fit:cover;border-radius:7px;background:#000}
-.item div{flex:1;min-width:0;font-size:13.5px}
-.item div small{display:block;color:var(--suave);font-size:12px}
-.item button{padding:4px 9px;font-size:12px}
-.autocat{background:var(--painel2);border:1px solid var(--linha);border-radius:9px;padding:11px 13px;font-size:14.5px}
-.autocat b{color:var(--ciano)}
-.contagem{float:right;font-size:11.5px;color:var(--suave)}
-.tabela{width:100%;font-size:13.5px;border-collapse:collapse}
-.tabela td{padding:6px 0;border-bottom:1px solid var(--linha);vertical-align:top}
-.tabela td:first-child{color:var(--suave);width:38%}
 /* progresso */
-.fundoModal{position:fixed;inset:0;background:rgba(6,8,11,.82);display:none;place-items:center;padding:22px;z-index:20}
+.fundoModal{position:fixed;inset:0;background:rgba(6,8,11,.85);display:none;place-items:center;padding:20px;z-index:20}
 .fundoModal.ver{display:grid}
-.modal{background:var(--painel);border:1px solid var(--linha);border-radius:16px;padding:26px;width:min(520px,100%)}
-.barra{height:8px;border-radius:99px;background:var(--painel2);overflow:hidden;margin:16px 0 6px}
-.barra i{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--ciano),var(--amarelo));
-  transition:width .35s ease}
-.pct{font-family:"Archivo Black";font-size:30px}
-.passos{margin-top:16px;font-size:13.5px;max-height:220px;overflow:auto}
-.passos div{padding:4px 0;color:var(--suave)}
-.passos div.atual{color:var(--texto)}
+.modal{background:var(--painel);border:1px solid var(--linha);border-radius:18px;padding:28px;width:min(440px,100%)}
+.pct{font-family:"Archivo Black";font-size:32px}
+.barra{height:8px;border-radius:99px;background:#0a0c10;overflow:hidden;margin:14px 0 6px}
+.barra i{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--ciano),var(--amarelo));transition:width .35s ease}
+.passos{margin-top:14px;font-size:13px;max-height:200px;overflow:auto}
+.passos div{padding:3px 0;color:var(--suave)}
 .passos div.erro{color:var(--erro)}
-@media (max-width:900px){main{grid-template-columns:1fr;padding:16px}.trio{grid-template-columns:1fr}}
+.rodapeModal{display:flex;gap:10px;justify-content:flex-end;margin-top:18px}
+.rodapeModal button{padding:11px 18px;background:#20252c;color:var(--texto)}
+.rodapeModal button.acao{background:var(--amarelo);color:#15181d}
 </style>
 </head>
 <body>
-<header>
-  <div class="topo">
-    <h1>Anunciador <em>Geek Antenado</em></h1>
-    <div id="conexoes">verificando…</div>
+<h1>Anunciador <em>Geek Antenado</em></h1>
+<div id="conexoes">verificando…</div>
+
+<div class="cartao">
+  <label for="titulo">Nome do produto</label>
+  <input id="titulo" placeholder="Redmi Note 14 Pro 5G 8GB+256GB" autofocus>
+
+  <label for="pasta">Pasta de fotos no Drive</label>
+  <input id="pasta" placeholder="link da pasta">
+  <div class="dica">Busca as fotos pelo nome do produto — arquivos como <b>Nome do Produto (1).jpg</b></div>
+
+  <label for="ean">EAN da caixa <span style="color:var(--suave);font-weight:400">(quando tiver)</span></label>
+  <input id="ean" inputmode="numeric" placeholder="opcional">
+
+  <label>Preço</label>
+  <div class="duo">
+    <div class="precoLinha"><span>Shopify R$</span><input id="precoShopify" type="number" step="0.01" placeholder="0,00" style="padding-left:78px"></div>
+    <div class="precoLinha"><span>ML R$</span><input id="precoML" type="number" step="0.01" placeholder="0,00" style="padding-left:52px"></div>
   </div>
-  <div class="trilha"><div class="feito"></div><div></div><div></div><div></div></div>
-</header>
+  <div class="dica">Deixe um dos dois em branco para anunciar só na outra plataforma.</div>
 
-<main>
-<div>
-  <!-- 1. FOTOS -->
-  <section class="cartao" data-passo="1">
-    <h2>1. Fotos do produto</h2>
-    <p class="sub">Cole a pasta do Drive, filtre pelo nome e clique nas fotos na ordem que devem aparecer.</p>
-    <label for="pasta">Pasta do Google Drive</label>
-    <input id="pasta" placeholder="https://drive.google.com/drive/folders/…">
-    <label for="busca">Filtrar pelo nome do produto</label>
-    <div style="display:flex;gap:10px">
-      <input id="busca" placeholder="Redmi Note 14 Pro">
-      <button id="btBuscar" style="white-space:nowrap">Buscar</button>
-    </div>
-    <div id="grade" class="grade"></div>
-    <div id="dicaFoto" class="dica">Nomeie os arquivos como <b>Nome do Produto (1).jpg</b> para o filtro achar tudo de uma vez.</div>
-    <div class="rodape"><span></span><button class="acao" onclick="irPara(2)">Continuar</button></div>
-  </section>
+  <div class="check"><input type="checkbox" id="usado" checked><label for="usado" style="margin:0;color:var(--texto)">Produto usado (testes do canal)</label></div>
 
-  <!-- 2. PRODUTO -->
-  <section class="cartao" data-passo="2" hidden>
-    <h2>2. Produto</h2>
-    <p class="sub">O título vai em caixa alta na Shopify. O EAN sai da caixa — dá para ler direto da foto ou digitar.</p>
-    <label for="titulo">Nome do produto</label>
-    <input id="titulo" placeholder="Redmi Note 14 Pro 5G 8GB+256GB">
-    <div class="duo">
-      <div><label for="marca">Marca</label><input id="marca" placeholder="Xiaomi"></div>
-      <div><label for="modelo">Modelo</label><input id="modelo" placeholder="Note 14 Pro 5G"></div>
-    </div>
-    <div class="duo">
-      <div><label for="categoria">Categoria na Shopify</label>
-        <input id="categoria" list="cats" placeholder="Smartphones">
-        <datalist id="cats"><option>Smartphones</option><option>Fones de Ouvido</option><option>Capas e Acessórios</option>
-        <option>Smartwatches</option><option>Caixas de Som</option><option>Tablets</option><option>Projetores</option></datalist>
-      </div>
-      <div><label for="sku">SKU</label><input id="sku" placeholder="gerado como MARCA-MODELO"></div>
-    </div>
-    <label for="ean">EAN / GTIN da caixa <span class="contagem">obrigatório no Mercado Livre</span></label>
-    <div style="display:flex;gap:10px">
-      <input id="ean" inputmode="numeric" placeholder="6941812…">
-      <button id="btEan" style="white-space:nowrap">Ler da foto</button>
-    </div>
-    <div id="dicaEan" class="dica">Sem o código na foto, digite os 13 dígitos impressos abaixo das barras.</div>
-    <div class="duo">
-      <div><label for="estoque">Estoque</label><input id="estoque" type="number" value="1" min="0"></div>
-      <div><label for="tags">Tags da Shopify</label><input id="tags" placeholder="smartphones, xiaomi"></div>
-    </div>
-    <div class="rodape"><button onclick="irPara(1)">Voltar</button><button class="acao" onclick="irPara(3)">Continuar</button></div>
-  </section>
-
-  <!-- 3. PREÇO E DESCRIÇÃO -->
-  <section class="cartao" data-passo="3" hidden>
-    <h2>3. Preço e descrição</h2>
-    <p class="sub">O preço de referência vira o preço "de" riscado na Shopify.</p>
-    <div class="trio">
-      <div><label for="precoRef">Preço de referência</label><input id="precoRef" type="number" step="0.01" placeholder="1899,00"></div>
-      <div><label for="desconto">Desconto %</label><input id="desconto" type="number" value="10"></div>
-      <div><label for="precoFixo">Ou preço fixo</label><input id="precoFixo" type="number" step="0.01" placeholder="699,00"></div>
-    </div>
-    <div class="linhaCheck"><input type="checkbox" id="usado" checked><label for="usado" style="margin:0;color:var(--texto)">Abrir com o aviso de produto usado nos testes do canal</label></div>
-    <label for="intro">Frase de abertura</label>
-    <input id="intro" placeholder="Intermediário com AMOLED de 120 Hz por preço de entrada.">
-    <label for="destaques">Destaques — um por linha</label>
-    <textarea id="destaques" placeholder="Snapdragon 7s Gen 3&#10;Tela AMOLED 120 Hz&#10;Câmera 200 MP com OIS"></textarea>
-    <label for="fechamento">Frase de fechamento</label>
-    <input id="fechamento" placeholder="Indicado pra quem quer câmera boa gastando pouco.">
-    <button id="btIA" style="margin-top:14px">Escrever descrição automaticamente</button>
-    <div class="rodape"><button onclick="irPara(2)">Voltar</button><button class="acao" onclick="irPara(4)">Continuar</button></div>
-  </section>
-
-  <!-- 4. MERCADO LIVRE -->
-  <section class="cartao" data-passo="4" hidden>
-    <h2>4. Mercado Livre</h2>
-    <p class="sub">Anúncio usado, tipo Clássico, Mercado Envios pago pelo comprador.</p>
-    <label for="tituloML">Título do anúncio <span class="contagem" id="contML">0/60</span></label>
-    <input id="tituloML" maxlength="60" placeholder="Smartphone Xiaomi Redmi Note 14 Pro 5G 256gb">
-    <label>Categoria <span class="contagem">detectada pelo próprio Mercado Livre</span></label>
-    <div id="catAuto" class="autocat">identificando pelo título…</div>
-    <div id="caminhoCat" class="dica"></div>
-    <div style="margin-top:8px">
-      <button id="btTrocar" type="button">Trocar categoria</button>
-      <button id="btRedetectar" type="button">Detectar de novo</button>
-    </div>
-    <div id="boxTroca" hidden style="margin-top:10px">
-      <select id="catML"></select>
-    </div>
-    <div id="atributos"></div>
-    <div class="duo">
-      <div><label for="garantiaTipo">Tipo de garantia</label>
-        <select id="garantiaTipo"><option>Garantia do vendedor</option><option>Garantia de fábrica</option><option>Sem garantia</option></select></div>
-      <div><label for="garantiaTempo">Tempo</label>
-        <select id="garantiaTempo"><option>30 dias</option><option>90 dias</option><option>6 meses</option><option>12 meses</option></select></div>
-    </div>
-    <div class="linhaCheck"><input type="checkbox" id="freteGratis"><label for="freteGratis" style="margin:0;color:var(--texto)">Oferecer frete grátis (custo por sua conta)</label></div>
-    <div class="rodape"><button onclick="irPara(3)">Voltar</button><button class="acao" onclick="irPara(5)">Revisar</button></div>
-  </section>
-
-  <!-- 5. REVISÃO -->
-  <section class="cartao" data-passo="5" hidden>
-    <h2>Revisão</h2>
-    <p class="sub">Confira e publique.</p>
-    <table class="tabela" id="revisao"></table>
-    <div class="linhaCheck"><input type="checkbox" id="chShopify" checked><label for="chShopify" style="margin:0;color:var(--texto)">Publicar na Shopify</label></div>
-    <div class="linhaCheck"><input type="checkbox" id="chML" checked><label for="chML" style="margin:0;color:var(--texto)">Publicar no Mercado Livre</label></div>
-    <div class="rodape" style="flex-wrap:wrap">
-      <button onclick="irPara(4)">Voltar</button>
-      <div style="display:flex;gap:10px">
-        <button id="btAddFila">Adicionar à fila e começar outro</button>
-        <button class="acao" id="btPublicar">Publicar</button>
-      </div>
-    </div>
-  </section>
+  <button class="anunciar" id="btAnunciar">Anunciar</button>
 </div>
 
-<!-- COLUNA DIREITA -->
-<div>
-  <section class="cartao">
-    <div class="preco" id="precoFinal">R$ 0,00</div>
-    <div class="dica" id="precoDetalhe">preencha o preço na etapa 3</div>
-    <div id="fotosResumo" class="dica" style="margin-top:12px">nenhuma foto selecionada</div>
-  </section>
-  <section class="cartao" id="cartaoFila" hidden>
-    <h2>Fila de anúncios <span id="qtdFila" class="contagem"></span></h2>
-    <p class="sub">Publicados em sequência, um depois do outro.</p>
-    <div id="listaFila"></div>
-    <button class="acao" id="btPublicarFila" style="width:100%;margin-top:12px">Publicar fila</button>
-  </section>
-  <section class="cartao">
-    <h2>Prévia da descrição</h2>
-    <div class="previa" id="previa"><span class="dica">Aparece aqui conforme você escreve.</span></div>
-  </section>
-  <section class="cartao">
-    <h2>Últimos anúncios</h2>
-    <div id="historico" class="dica">—</div>
-  </section>
-</div>
-</main>
+<div class="historico" id="historico"></div>
 
 <div class="fundoModal" id="modal">
   <div class="modal">
@@ -246,8 +95,8 @@ button:disabled{opacity:.45;cursor:not-allowed}
     <div class="barra"><i id="barra"></i></div>
     <div id="rotulo" class="dica">preparando…</div>
     <div class="passos" id="passos"></div>
-    <div id="final" hidden style="margin-top:18px"></div>
-    <div class="rodape" id="rodapeModal" hidden>
+    <div id="final" hidden style="margin-top:16px;font-size:14px"></div>
+    <div class="rodapeModal" id="rodapeModal" hidden>
       <button onclick="novoAnuncio()">Novo anúncio</button>
       <button class="acao" onclick="fecharModal()">Fechar</button>
     </div>
@@ -255,278 +104,74 @@ button:disabled{opacity:.45;cursor:not-allowed}
 </div>
 
 <script>
-const $ = i => document.getElementById(i);
+const $ = id => document.getElementById(id);
 const brl = n => (n || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
-let fotos = [], escolhidas = [], atributosML = [], passoAtual = 1;
 
-/* ---- conexões ---- */
 fetch("/api/status").then(r => r.json()).then(s => {
-  const pino = (nome, ok, chave) => `<span class="pino ${ok ? "on" : ""}" title="${(s.erros || {})[chave] || (ok ? "conectado" : "")}"><i></i>${nome}</span>`;
-  $("conexoes").innerHTML = pino("Shopify", s.shopify, "shopify") + pino("Drive", s.drive, "drive") +
-    pino("Mercado Livre", s.ml, "ml") + pino("Descrição automática", s.ia, "ia") +
-    (s.ml ? "" : ' <a href="/auth/ml">conectar Mercado Livre</a>') +
-    (s.shopify ? "" : ' <a href="/auth/shopify">conectar Shopify</a>');
-  if (s.pastaPadrao && !$("pasta").value) $("pasta").value = s.pastaPadrao;
+  const pino = (nome, ok) => `<span class="pino ${ok ? "on" : ""}"><i></i>${nome}</span>`;
+  $("conexoes").innerHTML = pino("Shopify", s.shopify) + pino("Drive", s.drive) + pino("Mercado Livre", s.ml) +
+    (s.shopify ? "" : ' <a href="/auth/shopify">conectar</a>') +
+    (s.ml ? "" : ' <a href="/auth/ml">conectar ML</a>');
+  if (s.pastaPadrao) $("pasta").value = s.pastaPadrao;
 });
 
-/* ---- navegação ---- */
-function irPara(n) {
-  if (n === 2 && !escolhidas.length && !confirm("Nenhuma foto selecionada. O produto sobe como rascunho na Shopify. Seguir assim?")) return;
-  if (n >= 3 && !$("titulo").value.trim()) { alert("Falta o nome do produto."); return; }
-  passoAtual = n;
-  document.querySelectorAll("[data-passo]").forEach(s => s.hidden = +s.dataset.passo !== n);
-  document.querySelectorAll(".trilha div").forEach((d, i) => d.classList.toggle("feito", i < Math.min(n, 4)));
-  if (n === 4) { if (!$("tituloML").value) sugerirTituloML(); detectarCategoria(false); }
-  if (n === 5) revisar();
-  window.scrollTo({ top: 0, behavior: "smooth" });
-}
+async function anunciar() {
+  const titulo = $("titulo").value.trim();
+  const precoShopify = parseFloat($("precoShopify").value) || 0;
+  const precoML = parseFloat($("precoML").value) || 0;
+  if (!titulo) return alert("Falta o nome do produto.");
+  if (!precoShopify && !precoML) return alert("Preencha o preço de pelo menos uma plataforma.");
+  if (!$("pasta").value.trim()) return alert("Falta a pasta de fotos.");
 
-/* ---- fotos ---- */
-$("btBuscar").onclick = async () => {
-  const b = $("btBuscar"); b.disabled = true; b.textContent = "Buscando…";
-  try {
-    const nome = $("busca").value || $("titulo").value;
-    const j = await (await fetch(`/api/fotos?pasta=${encodeURIComponent($("pasta").value)}&nome=${encodeURIComponent(nome)}`)).json();
-    if (!j.ok) throw new Error(j.erro);
-    fotos = j.files; escolhidas = [];
-    $("dicaFoto").innerHTML = fotos.length
-      ? `${fotos.length} foto(s) encontradas. Clique na ordem em que devem aparecer.`
-      : `<span class="ruim">Nada encontrado com esse nome.</span> Confira se os arquivos estão renomeados na pasta.`;
-    desenhar();
-  } catch (e) { $("dicaFoto").innerHTML = `<span class="ruim">${e.message}</span>`; }
-  b.disabled = false; b.textContent = "Buscar";
-};
-
-function desenhar() {
-  $("grade").innerHTML = fotos.map(f => {
-    const i = escolhidas.indexOf(f.url);
-    return `<div class="foto ${i > -1 ? "on" : ""}" data-u="${f.url}"><img src="${f.url}" loading="lazy" alt="${f.nome}">
-      ${i > -1 ? `<b>${i + 1}</b>` : ""}<span>${f.nome}</span></div>`;
-  }).join("");
-  document.querySelectorAll(".foto").forEach(el => el.onclick = () => {
-    const u = el.dataset.u, i = escolhidas.indexOf(u);
-    i > -1 ? escolhidas.splice(i, 1) : escolhidas.push(u);
-    desenhar();
-  });
-  $("fotosResumo").textContent = escolhidas.length
-    ? `${escolhidas.length} foto(s) selecionadas — a primeira vira a capa`
-    : "nenhuma foto selecionada";
-}
-
-/* ---- EAN ---- */
-$("btEan").onclick = async () => {
-  const b = $("btEan"); b.disabled = true; b.textContent = "Lendo…";
-  try {
-    const j = await (await fetch("/api/ler-ean", {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ fotos: escolhidas.length ? escolhidas : fotos.slice(0, 4).map(f => f.url) })
-    })).json();
-    if (!j.ok) throw new Error(j.erro);
-    $("ean").value = j.ean;
-    $("dicaEan").innerHTML = `<span class="bom">Li ${j.ean} na foto — confira antes de publicar.</span>`;
-  } catch (e) { $("dicaEan").innerHTML = `<span class="ruim">${e.message}</span>`; }
-  b.disabled = false; b.textContent = "Ler da foto";
-};
-
-/* ---- preço e prévia ---- */
-function preco() {
-  const fixo = parseFloat($("precoFixo").value), ref = parseFloat($("precoRef").value);
-  const d = parseFloat($("desconto").value) || 0;
-  let p = 0, txt = "preencha o preço na etapa 3";
-  if (fixo > 0) { p = fixo; txt = "preço fixo, sem desconto"; }
-  else if (ref > 0) { p = +(ref * (1 - d / 100)).toFixed(2); txt = `${brl(ref)} menos ${d}%`; }
-  $("precoFinal").textContent = brl(p); $("precoDetalhe").textContent = txt;
-  return p;
-}
-["precoRef", "desconto", "precoFixo"].forEach(i => $(i).addEventListener("input", preco));
-
-function previa() {
-  const bl = $("destaques").value.split("\n").map(s => s.trim()).filter(Boolean);
-  const h = [];
-  if ($("usado").checked) h.push("<p>Produto usado para testes e produção de vídeos no canal Geek Antenado.<br>Não possui marcas de uso.<br>Todos os acessórios na caixa.</p>");
-  if ($("intro").value) h.push(`<p>${$("intro").value}</p>`);
-  if (bl.length) h.push(`<p><b>✅ Principais destaques</b></p><ul>${bl.map(b => `<li>${b}</li>`).join("")}</ul>`);
-  if ($("fechamento").value) h.push(`<p>📌 ${$("fechamento").value}</p>`);
-  $("previa").innerHTML = h.join("") || '<span class="dica">Aparece aqui conforme você escreve.</span>';
-}
-["intro", "destaques", "fechamento", "usado"].forEach(i => $(i).addEventListener("input", previa));
-
-$("btIA").onclick = async () => {
-  const b = $("btIA"); b.disabled = true; b.textContent = "Escrevendo…";
-  try {
-    const j = await (await fetch("/api/gerar-texto", {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ titulo: $("titulo").value, categoria: $("categoria").value, ficha: $("destaques").value })
-    })).json();
-    if (!j.ok) throw new Error(j.erro);
-    $("intro").value = j.intro || "";
-    $("destaques").value = (j.destaques || []).join("\n");
-    $("fechamento").value = j.fechamento || "";
-    if (j.titulo_ml) { $("tituloML").value = j.titulo_ml.slice(0, 60); contar(); }
-    previa();
-  } catch (e) { alert(e.message); }
-  b.disabled = false; b.textContent = "Escrever descrição automaticamente";
-};
-
-/* ---- Mercado Livre ---- */
-const contar = () => $("contML").textContent = `${$("tituloML").value.length}/60`;
-$("tituloML").addEventListener("input", contar);
-function sugerirTituloML() {
-  const t = [$("categoria").value.replace(/s$/, ""), $("marca").value, $("titulo").value]
-    .filter(Boolean).join(" ").replace(/\s+/g, " ");
-  $("tituloML").value = t.slice(0, 60); contar();
-}
-
-let catsML = [];
-
-$("btTrocar").onclick = () => { $("boxTroca").hidden = !$("boxTroca").hidden; };
-$("btRedetectar").onclick = () => detectarCategoria(true);
-$("catML").addEventListener("change", () => {
-  const c = catsML.find(x => x.id === $("catML").value);
-  if (c) pintarCategoria(c, false);
-  carregarAtributos($("catML").value);
-});
-
-async function detectarCategoria(forcar) {
-  if (!forcar && $("catML").value) return;
-  const nome = [$("tituloML").value || $("titulo").value, $("marca").value, $("modelo").value].filter(Boolean).join(" ");
-  $("catAuto").textContent = "identificando pelo título…";
-  $("atributos").innerHTML = "";
-  try {
-    const j = await (await fetch(`/api/ml/auto?nome=${encodeURIComponent(nome)}`)).json();
-    if (!j.ok) throw new Error(j.erro);
-    catsML = j.alternativas;
-    $("catML").innerHTML = catsML.map(c => `<option value="${c.id}" ${c.id === j.escolhida.id ? "selected" : ""}>${c.nome} (${c.id})</option>`).join("");
-    pintarCategoria(j.escolhida, true);
-    $("caminhoCat").textContent = j.caminho;
-    montarAtributos(j.atributos);
-  } catch (e) {
-    $("catAuto").innerHTML = `<span class="ruim">${e.message}</span>`;
-  }
-}
-
-function pintarCategoria(c, auto) {
-  $("catAuto").innerHTML = `<b>${c.nome}</b> · ${c.id}${auto ? " · escolhida automaticamente" : ""}`;
-}
-
-async function carregarAtributos(cat) {
-  if (!cat) return;
-  $("atributos").innerHTML = '<div class="dica">carregando ficha da categoria…</div>';
-  try {
-    const j = await (await fetch(`/api/ml/atributos?categoria=${cat}`)).json();
-    if (!j.ok) throw new Error(j.erro);
-    $("caminhoCat").textContent = j.caminho;
-    montarAtributos(j.atributos);
-  } catch (e) { $("atributos").innerHTML = `<span class="ruim">${e.message}</span>`; }
-}
-
-function montarAtributos(lista) {
-  atributosML = lista || [];
-  $("atributos").innerHTML = atributosML.length
-    ? atributosML.map(a => `<label for="at_${a.id}">${a.nome}${a.obrigatorio ? " *" : ""}</label>` + (
-      a.valores.length
-        ? `<select id="at_${a.id}" data-attr="${a.id}"><option value="">—</option>${a.valores.map(v => `<option value="${v.id}">${v.nome}</option>`).join("")}</select>`
-        : `<input id="at_${a.id}" data-attr="${a.id}" data-livre="1" placeholder="${a.tipo === "number_unit" ? "ex.: 128 GB" : ""}">`)).join("")
-    : '<div class="dica">Essa categoria não exige nada além de marca, modelo e EAN.</div>';
-}
-
-function coletarAtributos() {
-  return [...document.querySelectorAll("[data-attr]")].map(el => el.dataset.livre
-    ? { id: el.dataset.attr, value_name: el.value.trim() }
-    : { id: el.dataset.attr, value_id: el.value }).filter(a => a.value_id || a.value_name);
-}
-
-/* ---- revisão ---- */
-function revisar() {
-  const faltando = atributosML.filter(a => a.obrigatorio &&
-    !coletarAtributos().some(c => c.id === a.id)).map(a => a.nome);
-  const l = [
-    ["Título Shopify", $("titulo").value.toUpperCase()],
-    ["Título Mercado Livre", $("tituloML").value],
-    ["Marca / modelo", `${$("marca").value} ${$("modelo").value}`],
-    ["Categoria", `${$("categoria").value} · ML: ${$("catAuto").textContent}`],
-    ["EAN", $("ean").value || '<span class="ruim">vazio — o ML costuma exigir</span>'],
-    ["Preço", brl(preco())],
-    ["Estoque", $("estoque").value],
-    ["Fotos", escolhidas.length || '<span class="ruim">nenhuma (Shopify entra como rascunho)</span>'],
-    ["Garantia", `${$("garantiaTipo").value} · ${$("garantiaTempo").value}`],
-    ["Frete", $("freteGratis").checked ? "grátis" : "pago pelo comprador"]
-  ];
-  if (faltando.length) l.push(["Atributos em falta", `<span class="ruim">${faltando.join(", ")}</span>`]);
-  $("revisao").innerHTML = l.map(([a, b]) => `<tr><td>${a}</td><td>${b}</td></tr>`).join("");
-}
-
-/* ---- publicação ---- */
-let fila = [];
-
-function coletar() {
-  return {
-    titulo: $("titulo").value, tituloML: $("tituloML").value, marca: $("marca").value, modelo: $("modelo").value,
-    categoria: $("categoria").value, categoriaML: $("catML").value, sku: $("sku").value, ean: $("ean").value,
-    estoque: +$("estoque").value, precoRef: $("precoRef").value, desconto: $("desconto").value,
-    precoFixo: $("precoFixo").value, usado: $("usado").checked, intro: $("intro").value,
-    fechamento: $("fechamento").value,
-    destaques: $("destaques").value.split("\n").map(x => x.trim()).filter(Boolean),
-    tags: $("tags").value.split(",").map(x => x.trim()).filter(Boolean),
-    fotos: [...escolhidas], atributosML: coletarAtributos(),
-    garantiaTipo: $("garantiaTipo").value, garantiaTempo: $("garantiaTempo").value,
-    freteGratis: $("freteGratis").checked,
-    shopify: $("chShopify").checked, ml: $("chML").checked,
-    _preco: preco(), _capa: escolhidas[0] || ""
-  };
-}
-
-$("btAddFila").onclick = () => {
-  if (!$("titulo").value.trim()) return alert("Falta o nome do produto.");
-  fila.push(coletar());
-  desenharFila();
-  limparFormulario();
-  irPara(1);
-};
-
-function desenharFila() {
-  $("cartaoFila").hidden = !fila.length;
-  $("qtdFila").textContent = fila.length ? `${fila.length} na fila` : "";
-  $("btPublicarFila").textContent = `Publicar fila (${fila.length})`;
-  $("listaFila").innerHTML = fila.map((p, i) => `<div class="item">
-    ${p._capa ? `<img src="${p._capa}" alt="">` : ""}
-    <div>${(p.titulo || "").toUpperCase()}<small>${brl(p._preco)} · ${p.fotos.length} foto(s) · ${[p.shopify && "Shopify", p.ml && "ML"].filter(Boolean).join(" + ")}</small></div>
-    <button onclick="removerFila(${i})">remover</button></div>`).join("");
-}
-function removerFila(i) { fila.splice(i, 1); desenharFila(); }
-
-function limparFormulario() {
-  ["titulo", "marca", "modelo", "ean", "sku", "intro", "destaques", "fechamento", "tituloML", "precoRef", "precoFixo", "busca"]
-    .forEach(i => $(i).value = "");
-  escolhidas = []; catsML = []; $("catML").innerHTML = "";
-  $("atributos").innerHTML = ""; atributosML = [];
-  $("catAuto").textContent = "identificando pelo título…"; $("caminhoCat").textContent = "";
-  desenhar(); previa(); preco(); contar();
-}
-
-$("btPublicar").onclick = () => {
-  const lista = [...fila];
-  if ($("titulo").value.trim()) lista.push(coletar());
-  if (!lista.length) return alert("Nada para publicar.");
-  enviar(lista);
-};
-$("btPublicarFila").onclick = () => {
-  if ($("titulo").value.trim() && confirm("Incluir também o produto que está no formulário?")) fila.push(coletar());
-  enviar([...fila]);
-};
-
-async function enviar(lista) {
-  emFila = lista;
+  const b = $("btAnunciar"); b.disabled = true; b.textContent = "Buscando fotos…";
   $("modal").classList.add("ver");
   $("passos").innerHTML = ""; $("final").hidden = true; $("rodapeModal").hidden = true;
-  $("barra").style.width = "0%"; $("pct").textContent = "0%";
-  $("rotulo").textContent = lista.length > 1 ? `${lista.length} anúncios na fila` : "preparando…";
-  const j = await (await fetch("/api/publicar", {
-    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ produtos: lista })
-  })).json();
-  acompanhar(j.job);
+  $("barra").style.width = "5%"; $("pct").textContent = "5%"; $("rotulo").textContent = "buscando fotos no Drive…";
+
+  try {
+    const jf = await (await fetch(`/api/fotos?pasta=${encodeURIComponent($("pasta").value)}&nome=${encodeURIComponent(titulo)}`)).json();
+    if (!jf.ok) throw new Error(jf.erro);
+    const fotos = jf.files.map(f => f.url);
+    if (!fotos.length) throw new Error(`Nenhuma foto encontrada para "${titulo}" nessa pasta. Confira o nome dos arquivos.`);
+
+    $("rotulo").textContent = "escrevendo descrição…"; $("barra").style.width = "10%"; $("pct").textContent = "10%";
+    let intro = "", destaques = [], fechamento = "", tituloML = titulo.slice(0, 60);
+    try {
+      const jt = await (await fetch("/api/gerar-texto", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ titulo, categoria: "", ficha: "" })
+      })).json();
+      if (jt.ok) { intro = jt.intro || ""; destaques = jt.destaques || []; fechamento = jt.fechamento || ""; if (jt.titulo_ml) tituloML = jt.titulo_ml.slice(0, 60); }
+    } catch { /* segue sem IA */ }
+
+    const partes = titulo.split(" ");
+    const marca = partes[0] || "";
+    const modelo = partes.slice(1).join(" ") || titulo;
+
+    const corpo = {
+      produtos: [{
+        titulo, tituloML, marca, modelo, categoria: "", categoriaML: "",
+        ean: $("ean").value, estoque: 1,
+        precoShopify: precoShopify || undefined, precoML: precoML || undefined,
+        usado: $("usado").checked, intro, fechamento, destaques,
+        tags: [], fotos, atributosML: [],
+        garantiaTipo: "Garantia do vendedor", garantiaTempo: "30 dias", freteGratis: false,
+        shopify: precoShopify > 0, ml: precoML > 0
+      }]
+    };
+
+    b.textContent = "Publicando…";
+    const j = await (await fetch("/api/publicar", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(corpo)
+    })).json();
+    acompanhar(j.job);
+  } catch (e) {
+    $("rotulo").innerHTML = `<span class="ruim">${e.message}</span>`;
+    $("rodapeModal").hidden = false;
+    b.disabled = false; b.textContent = "Anunciar";
+  }
 }
-let emFila = [];
+$("btAnunciar").onclick = anunciar;
 
 function acompanhar(job) {
   const es = new EventSource(`/api/progresso/${job}`);
@@ -535,13 +180,8 @@ function acompanhar(job) {
     if (d.tipo === "etapa") {
       $("barra").style.width = d.pct + "%"; $("pct").textContent = d.pct + "%";
       $("rotulo").textContent = d.texto;
-      document.querySelectorAll("#passos div").forEach(x => x.classList.remove("atual"));
-      $("passos").insertAdjacentHTML("beforeend", `<div class="atual">${d.texto}</div>`);
+      $("passos").insertAdjacentHTML("beforeend", `<div>${d.texto}</div>`);
       $("passos").scrollTop = 1e6;
-    }
-    if (d.tipo === "produto") {
-      $("rotulo").textContent = `Produto ${d.indice} de ${d.total}`;
-      $("passos").insertAdjacentHTML("beforeend", `<div style="color:var(--ciano);margin-top:8px"><b>${d.nome}</b></div>`);
     }
     if (d.tipo === "falha" || d.tipo === "erro")
       $("passos").insertAdjacentHTML("beforeend", `<div class="erro">${d.alvo ? d.alvo + ": " : ""}${d.texto}</div>`);
@@ -551,38 +191,36 @@ function acompanhar(job) {
 }
 
 function finalizar(lista) {
-  $("barra").style.width = "100%"; $("pct").textContent = "100%";
-  $("rotulo").textContent = lista.length > 1 ? `${lista.length} anúncios processados` : "concluído";
-  const l = [];
-  lista.forEach(r => {
-    l.push(`<b>${r.produto}</b> — ${brl(r.preco)}${r.sku ? " · SKU " + r.sku : ""}`);
-    if (r.erro) l.push(`<span class="ruim">${r.erro}</span>`);
-    if (r.shopify) l.push(r.shopify.ok
-      ? `<span class="bom">Shopify ${r.shopify.rascunho ? "em rascunho" : "publicado"}</span> — <a href="${r.shopify.admin}" target="_blank">abrir</a>`
-      : `<span class="ruim">Shopify:</span> ${r.shopify.erro}`);
-    if (r.ml) l.push(r.ml.ok
-      ? `<span class="bom">Mercado Livre ${r.ml.status}</span> — <a href="${r.ml.url}" target="_blank">ver anúncio</a>`
-      : `<span class="ruim">Mercado Livre:</span> ${r.ml.erro}`);
-    (r.avisos || []).forEach(a => l.push(`<span class="dica">${a}</span>`));
-    l.push("<br>");
-  });
-  l.push('<span class="dica">Falta o peso dos produtos na aba Frete da Shopify.</span>');
+  $("barra").style.width = "100%"; $("pct").textContent = "100%"; $("rotulo").textContent = "concluído";
+  const r = lista[0];
+  const l = [`<b>${r.produto}</b>`];
+  if (r.erro) l.push(`<span class="ruim">${r.erro}</span>`);
+  if (r.shopify) l.push(r.shopify.ok
+    ? `<span class="bom">Shopify ${r.shopify.rascunho ? "em rascunho" : "publicado"}</span> — <a href="${r.shopify.admin}" target="_blank">abrir</a> (${brl(r.precoShopify)})`
+    : `<span class="ruim">Shopify:</span> ${r.shopify.erro}`);
+  if (r.ml) l.push(r.ml.ok
+    ? `<span class="bom">Mercado Livre ${r.ml.status}</span> — <a href="${r.ml.url}" target="_blank">ver anúncio</a> (${brl(r.precoML)})`
+    : `<span class="ruim">Mercado Livre:</span> ${r.ml.erro}`);
+  (r.avisos || []).forEach(a => l.push(`<span class="dica">${a}</span>`));
   $("final").innerHTML = l.join("<br>"); $("final").hidden = false; $("rodapeModal").hidden = false;
-  fila = []; desenharFila();
+  $("btAnunciar").disabled = false; $("btAnunciar").textContent = "Anunciar";
   historico();
 }
 
 const fecharModal = () => $("modal").classList.remove("ver");
-function novoAnuncio() { limparFormulario(); fecharModal(); irPara(1); }
+function novoAnuncio() {
+  ["titulo", "ean", "precoShopify", "precoML"].forEach(i => $(i).value = "");
+  fecharModal(); $("titulo").focus();
+}
 
 async function historico() {
   const h = await (await fetch("/api/historico")).json();
-  $("historico").innerHTML = h.length ? h.slice(0, 8).map(x =>
-    `${new Date(x.data).toLocaleDateString("pt-BR")} · ${x.produto} · ${brl(x.preco)} · ` +
-    ([x.shopify?.ok && "Shopify", x.ml?.ok && "ML"].filter(Boolean).join(" + ") || '<span class="ruim">falhou</span>')
-  ).join("<br>") : "—";
+  $("historico").innerHTML = h.length ? h.slice(0, 6).map(x =>
+    `<div>${new Date(x.data).toLocaleDateString("pt-BR")} · ${x.produto} · ` +
+    ([x.shopify?.ok && "Shopify", x.ml?.ok && "ML"].filter(Boolean).join(" + ") || '<span class="ruim">falhou</span>') + `</div>`
+  ).join("") : "";
 }
-historico(); preco(); contar(); desenharFila();
+historico();
 </script>
 </body>
 </html>

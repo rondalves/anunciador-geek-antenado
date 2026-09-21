@@ -67,37 +67,34 @@ emitido e acesse `https://SEU-SUBDOMINIO` normalmente — sem precisar configura
 Abrir `https://SEU-SUBDOMINIO/auth/ml` e `https://SEU-SUBDOMINIO/auth/shopify` uma única vez cada,
 para conectar as duas contas. Os tokens ficam em `data/` e se renovam sozinhos.
 
-## Uso — 5 etapas na tela
+## Uso — uma tela só
 
-1. **Fotos** — cola a pasta do Drive, filtra pelo nome, clica nas fotos na ordem (a 1ª vira capa).
-2. **Produto** — nome, marca, modelo, categoria, estoque e o **EAN**: botão "Ler da foto" tenta
-   extrair o código da caixa; se não der, você digita.
-3. **Preço e descrição** — referência menos desconto (ou preço fixo) e os destaques, na mão ou automáticos.
-4. **Mercado Livre** — título de até 60 caracteres e **categoria automática**: o painel manda
-   título + marca + modelo para o Mercado Livre, aplica a categoria que ele devolve e já carrega
-   os **atributos obrigatórios** dela. Dá para trocar por outra sugestão ou redetectar, mas
-   não precisa fazer nada para publicar.
-5. **Revisão** — confere tudo e publica, com barra de progresso passo a passo
-   (criação, cada foto enviada, publicação, descrição).
+1. **Nome do produto** — escreva como marca + modelo (ex. "Xiaomi Redmi Note 14 Pro 5G"). É a
+   partir dele que o painel busca as fotos, deriva marca/modelo e monta o título do Mercado Livre.
+2. **Pasta de fotos** — vem preenchida com a pasta padrão; troque se o produto estiver em outra.
+   As fotos são buscadas automaticamente pelo nome do produto (arquivos `Nome do Produto (1).jpg`,
+   `(2).jpg`...) — não precisa selecionar uma por uma.
+3. **EAN** — cole quando tiver a caixa em mãos; pode deixar em branco.
+4. **Preço Shopify** e **Preço Mercado Livre** — separados de propósito, cada plataforma tem o
+   seu. Deixe um em branco pra anunciar só na outra.
+5. **Anunciar** — busca as fotos, gera a descrição por IA (se a `ANTHROPIC_API_KEY` estiver
+   configurada; senão sai um texto básico), detecta a categoria do Mercado Livre sozinho, e
+   publica nas duas plataformas com barra de progresso passo a passo.
 
-### Vários produtos de uma vez
-
-Na revisão, **Adicionar à fila e começar outro** guarda o produto e volta para a etapa 1 já limpa.
-A fila aparece na coluna da direita com foto, preço e destino de cada item (dá para remover).
-**Publicar fila** manda todos de uma vez: o servidor processa um depois do outro, a barra mostra
-"Produto 2 de 5" e o resumo final lista o link de cada anúncio. Falha em um produto não interrompe os demais.
+Sem foto encontrada pra esse nome, o painel avisa e não publica em nenhuma plataforma — evita
+criar rascunho vazio na Shopify ou o Mercado Livre recusar por falta de imagem.
 
 ## O que já vem no padrão do canal
 
 - Título sempre em CAIXA ALTA
 - Descrição: aviso de produto usado em testes → intro → ✅ destaques → 📌 fechamento
-- SKU `MARCA-MODELO`, estoque rastreado, `compare_at_price` = preço de referência
+- SKU `MARCA-MODELO`, estoque rastreado (confere depois de criar e corrige se a Shopify não
+  tiver marcado `tracked: true` de fato)
 - Shopify: ACTIVE + `publishablePublish` na Loja Virtual (DRAFT se não houver fotos)
 - Mercado Livre: `condition: used`, `listing_type_id: gold_special` (Clássico),
   categoria por `domain_discovery` com fallback no `category_predictor`,
   Mercado Envios `me2` pago pelo comprador, garantia do vendedor 30 dias,
-  `family_name` (com fallback para `title`), fotos por upload multipart, EAN em GTIN,
-  atributos obrigatórios da categoria preenchidos no formulário
+  `family_name` (com fallback para `title`), fotos por upload multipart, EAN em GTIN
 
 ## Fica manual
 

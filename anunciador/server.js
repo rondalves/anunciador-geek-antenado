@@ -299,9 +299,10 @@ app.post("/api/gerar-texto", async (req, res) => {
         messages: [{
           role: "user",
           content: `Anúncio do canal Geek Antenado. Produto: ${titulo}. Categoria: ${categoria}.
-Observações/ficha: ${ficha || "use o que souber do produto"}.
+Observações/ficha: ${ficha || "use seu conhecimento sobre este produto específico"}.
+Escreva com base nas especificações técnicas reais desse produto (processador, tela, bateria, conectividade, material, capacidade etc. — o que for relevante pra categoria). Nada de texto genérico que serviria pra qualquer produto.
 Responda SÓ com JSON, sem markdown:
-{"intro":"1 frase direta, sem enrolação","destaques":["6 a 9 bullets técnicos curtos"],"fechamento":"1 frase de pra quem é indicado","titulo_ml":"título Mercado Livre: tipo do produto primeiro, depois marca e modelo, máximo 60 caracteres"}`
+{"intro":"1-2 frases descrevendo o produto e pra que serve, com algum dado técnico já na abertura","destaques":["6 a 9 bullets de especificações técnicas e diferenciais reais do produto, cada um específico e informativo"],"fechamento":"1 frase de pra quem é indicado, ligada a um uso real do produto","titulo_ml":"título Mercado Livre: tipo do produto primeiro, depois marca e modelo, máximo 60 caracteres"}`
         }]
       })
     });
@@ -333,14 +334,14 @@ app.get("/api/progresso/:id", (req, res) => {
 function montarDescricao(p) {
   const bl = (p.destaques || []).filter(Boolean);
   const html = [
-    p.usado ? "<p>Produto usado para testes e produção de vídeos no canal Geek Antenado.<br>Não possui marcas de uso.<br>Todos os acessórios na caixa.</p>" : "",
+    p.usado ? "<p>Produto usado para criação de vídeos no canal Geek Antenado.<br>Não possui marcas de uso.<br>Todos os acessórios na caixa.</p>" : "",
     p.intro ? `<p>${p.intro}</p>` : "",
-    bl.length ? `<p><strong>✅ Principais destaques</strong></p>\n<ul>\n${bl.map(b => `<li>${b}</li>`).join("\n")}\n</ul>` : "",
+    bl.length ? `<p><strong>✅ Especificações e destaques</strong></p>\n<ul>\n${bl.map(b => `<li>${b}</li>`).join("\n")}\n</ul>` : "",
     p.fechamento ? `<p>📌 ${p.fechamento}</p>` : ""
   ].filter(Boolean).join("\n");
   const texto = [
-    p.usado ? "Produto usado para testes e produção de vídeos no canal Geek Antenado.\nNão possui marcas de uso.\nTodos os acessórios na caixa." : "",
-    p.intro, bl.length ? "Principais destaques:\n" + bl.map(b => `- ${b}`).join("\n") : "", p.fechamento
+    p.usado ? "Produto usado para criação de vídeos no canal Geek Antenado.\nNão possui marcas de uso.\nTodos os acessórios na caixa." : "",
+    p.intro, bl.length ? "Especificações e destaques:\n" + bl.map(b => `- ${b}`).join("\n") : "", p.fechamento
   ].filter(Boolean).join("\n\n");
   return { html, texto };
 }
@@ -380,8 +381,11 @@ async function publicarLote(job, lista) {
 }
 
 async function publicarUm(job, b, ctx) {
-  const preco = Number((b.precoFixo ? Number(b.precoFixo)
-    : Number(b.precoRef || 0) * (1 - Number(b.desconto || 0) / 100)).toFixed(2)) || 0;
+  const calcPreco = (fixo, ref, desconto) => Number((fixo ? Number(fixo)
+    : Number(ref || 0) * (1 - Number(desconto || 0) / 100)).toFixed(2)) || 0;
+  // preço por plataforma: usa o campo específico se vier; senão cai no modo antigo (referência-desconto) pros dois
+  const precoShopify = b.precoShopify != null ? Number(b.precoShopify) || 0 : calcPreco(b.precoFixo, b.precoRef, b.desconto);
+  const precoML = b.precoML != null ? Number(b.precoML) || 0 : calcPreco(b.precoFixo, b.precoRef, b.desconto);
   const { html, texto } = montarDescricao(b);
   const fotos = b.fotos || [];
   const p = {
@@ -389,17 +393,18 @@ async function publicarUm(job, b, ctx) {
     tituloML: (b.tituloML || b.titulo || "").slice(0, 60),
     marca: b.marca, modelo: b.modelo || b.titulo, categoria: b.categoria,
     sku: (b.sku || `${b.marca || ""}-${b.modelo || b.titulo || ""}`).toUpperCase().replace(/\s+/g, "-"),
-    ean: (b.ean || "").replace(/\D/g, ""), estoque: Number(b.estoque || 1), preco,
+    ean: (b.ean || "").replace(/\D/g, ""), estoque: Number(b.estoque || 1),
+    precoShopify, precoML,
     precoDe: b.precoRef && !b.precoFixo ? Number(b.precoRef) : null,
     tags: b.tags || [], fotos, status: fotos.length ? "ACTIVE" : "DRAFT",
     descricaoHtml: html, descricaoTexto: texto
   };
 
-  const passosShopify = 4;
+  const passosShopify = 5;
   const etapa = (txt) => emitir(job, {
     tipo: "etapa", pct: Math.min(99, Math.round((++ctx.passo / ctx.total) * 100)), texto: txt
   });
-  const out = { produto: p.titulo, preco, sku: p.sku, shopify: null, ml: null, avisos: [] };
+  const out = { produto: p.titulo, precoShopify: p.precoShopify, precoML: p.precoML, sku: p.sku, shopify: null, ml: null, avisos: [] };
 
   if (b.shopify) {
     try {
@@ -413,7 +418,7 @@ async function publicarUm(job, b, ctx) {
           productOptions: [{ name: "Title", values: [{ name: "Default Title" }] }],
           variants: [{
             optionValues: [{ optionName: "Title", name: "Default Title" }],
-            price: String(p.preco), ...(p.precoDe ? { compareAtPrice: String(p.precoDe) } : {}),
+            price: String(p.precoShopify), ...(p.precoDe ? { compareAtPrice: String(p.precoDe) } : {}),
             sku: p.sku, ...(p.ean ? { barcode: p.ean } : {}),
             inventoryItem: { tracked: true },
             inventoryQuantities: [{ locationId, name: "available", quantity: p.estoque }]
@@ -430,6 +435,18 @@ async function publicarUm(job, b, ctx) {
           { id: pid, media: fotos.map(u => ({ originalSource: u, mediaContentType: "IMAGE" })) });
         const e2 = ue(m.productCreateMedia); if (e2) out.avisos.push("Fotos Shopify: " + e2);
       }
+
+      etapa("Confirmando estoque rastreado");
+      try {
+        const chk = await gql(`query($id:ID!){ product(id:$id){ variants(first:1){ nodes{ inventoryItem{ id tracked } } } } }`, { id: pid });
+        const item = chk.product?.variants?.nodes?.[0]?.inventoryItem;
+        if (item && !item.tracked) {
+          // productSet às vezes cria o item sem tracked de fato, mesmo pedindo — força de novo
+          await gql(`mutation t($id:ID!,$input:InventoryItemInput!){ inventoryItemUpdate(id:$id, input:$input){ userErrors{ message } } }`,
+            { id: item.id, input: { tracked: true } });
+          out.avisos.push("Estoque não veio rastreado na primeira tentativa — corrigido.");
+        }
+      } catch (e) { out.avisos.push("Não consegui confirmar o rastreamento de estoque: " + e.message.slice(0, 120)); }
 
       etapa("Publicando na Loja Virtual");
       let publicado = true;
@@ -453,6 +470,7 @@ async function publicarUm(job, b, ctx) {
 
   if (b.ml) {
     try {
+      if (!fotos.length) throw new Error("Sem fotos — o Mercado Livre exige ao menos uma imagem para Clássico");
       etapa("Autenticando no Mercado Livre");
       const token = await mlToken();
 
@@ -474,13 +492,13 @@ async function publicarUm(job, b, ctx) {
 
       etapa("Criando anúncio no Mercado Livre");
       const attributes = [
-        { id: "BRAND", value_name: p.marca },
-        { id: "MODEL", value_name: p.modelo },
+        ...(p.marca ? [{ id: "BRAND", value_name: p.marca }] : []),
+        ...(p.modelo ? [{ id: "MODEL", value_name: p.modelo }] : []),
         ...(p.ean ? [{ id: "GTIN", value_name: p.ean }] : []),
         ...(b.atributosML || []).filter(a => a.value_id || a.value_name)
       ];
       const corpo = {
-        category_id: categoria, price: p.preco, currency_id: "BRL",
+        category_id: categoria, price: p.precoML, currency_id: "BRL",
         available_quantity: p.estoque, buying_mode: "buy_it_now", condition: "used",
         listing_type_id: "gold_special", pictures, attributes,
         shipping: { mode: "me2", local_pick_up: false, free_shipping: !!b.freteGratis },
