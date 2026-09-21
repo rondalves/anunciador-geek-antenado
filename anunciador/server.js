@@ -312,20 +312,30 @@ app.post("/api/gerar-texto", async (req, res) => {
       method: "POST",
       headers: { "Content-Type": "application/json", "x-api-key": ANTHROPIC_KEY, "anthropic-version": "2023-06-01" },
       body: JSON.stringify({
-        model: MODELO, max_tokens: 1000,
+        model: MODELO, max_tokens: 1500,
+        tools: [{ type: "web_search_20250305", name: "web_search" }],
         messages: [{
           role: "user",
           content: `Anúncio do canal Geek Antenado. Produto: ${titulo}. Categoria: ${categoria}.
-Observações/ficha: ${ficha || "use seu conhecimento sobre este produto específico"}.
-Escreva com base nas especificações técnicas reais desse produto (processador, tela, bateria, conectividade, material, capacidade etc. — o que for relevante pra categoria). Nada de texto genérico que serviria pra qualquer produto.
-Responda SÓ com JSON, sem markdown:
-{"intro":"1-2 frases descrevendo o produto e pra que serve, com algum dado técnico já na abertura","destaques":["6 a 9 bullets de especificações técnicas e diferenciais reais do produto, cada um específico e informativo"],"fechamento":"1 frase de pra quem é indicado, ligada a um uso real do produto","titulo_ml":"título Mercado Livre: tipo do produto primeiro, depois marca e modelo, máximo 60 caracteres"}`
+Observações/ficha: ${ficha || "nenhuma"}.
+Pesquise na internet a ficha técnica real desse produto específico (processador, tela, bateria, câmera, conectividade, material, capacidade — o que for relevante pra categoria) antes de escrever. Nada de texto genérico que serviria pra qualquer produto da categoria.
+Depois de pesquisar, responda SÓ com um bloco de texto contendo APENAS o JSON abaixo, sem markdown, sem \`\`\`, sem nenhum texto antes ou depois:
+{"intro":"1-2 frases descrevendo o produto e pra que serve, com algum dado técnico real já na abertura","destaques":["6 a 9 bullets de especificações técnicas reais e diferenciais do produto, cada um específico e verificado na pesquisa"],"fechamento":"1 frase de pra quem é indicado, ligada a um uso real do produto","titulo_ml":"título Mercado Livre: tipo do produto primeiro, depois marca e modelo, máximo 60 caracteres"}`
         }]
       })
     });
     const j = await r.json();
-    const txt = (j.content || []).map(c => c.text || "").join("").replace(/```json|```/g, "").trim();
-    res.json({ ok: true, ...JSON.parse(txt) });
+    if (j.error) throw new Error(j.error.message || "erro na API da Anthropic");
+    // com busca web ligada, a resposta pode ter vários blocos de texto (raciocínio + resultado);
+    // o JSON válido normalmente é o último bloco de texto, então tenta do fim pra início
+    const blocos = (j.content || []).filter(c => c.type === "text").map(c => c.text);
+    let dados = null;
+    for (let i = blocos.length - 1; i >= 0 && !dados; i--) {
+      const m = blocos[i].match(/\{[\s\S]*\}/);
+      if (m) { try { dados = JSON.parse(m[0]); } catch { /* tenta o próximo bloco */ } }
+    }
+    if (!dados) throw new Error("A IA não devolveu um JSON válido — tente de novo");
+    res.json({ ok: true, ...dados });
   } catch (e) { res.status(400).json({ ok: false, erro: e.message }); }
 });
 
