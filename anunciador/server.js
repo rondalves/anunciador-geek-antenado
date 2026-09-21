@@ -39,6 +39,8 @@ const ML_REFRESH_SEED = env.ML_REFRESH_TOKEN || "";
 
 const ANTHROPIC_KEY = env.ANTHROPIC_API_KEY || "";
 const MODELO = env.ANTHROPIC_MODEL || "claude-sonnet-4-6";
+const GEMINI_KEY = env.GEMINI_API_KEY || "";
+const GEMINI_MODEL = env.GEMINI_MODEL || "gemini-2.0-flash";
 
 const TOKEN_FILE = path.join(DATA, "ml_token.json");
 const LOG_FILE = path.join(DATA, "publicados.json");
@@ -298,9 +300,48 @@ async function detalhesCategoria(token, id) {
 
 // pede pra IA preencher os atributos obrigatórios da categoria que o formulário simplificado não coleta
 // (cada categoria do ML pede coisas diferentes — voltagem, cor, linha etc. — sem isso a publicação é recusada)
+// fala com a IA disponível: Gemini primeiro (gratuito, com busca no Google embutida),
+// Anthropic como alternativa só se GEMINI_API_KEY não estiver configurada
+async function chamarIA(prompt) {
+  if (GEMINI_KEY) {
+    const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_KEY}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], tools: [{ google_search: {} }] })
+    });
+    const j = await r.json();
+    if (j.error) throw new Error(j.error.message || "erro na API do Gemini");
+    const partes = j.candidates?.[0]?.content?.parts || [];
+    return partes.map(p => p.text || "").join("\n");
+  }
+  if (ANTHROPIC_KEY) {
+    const r = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-api-key": ANTHROPIC_KEY, "anthropic-version": "2023-06-01" },
+      body: JSON.stringify({
+        model: MODELO, max_tokens: 1800,
+        tools: [{ type: "web_search_20250305", name: "web_search" }],
+        messages: [{ role: "user", content: prompt }]
+      })
+    });
+    const j = await r.json();
+    if (j.error) throw new Error(j.error.message || "erro na API da Anthropic");
+    return (j.content || []).filter(c => c.type === "text").map(c => c.text).join("\n");
+  }
+  throw new Error("Nenhuma IA configurada — preencha GEMINI_API_KEY (grátis) no .env");
+}
+
+function extrairJSON(texto) {
+  const entre = texto.match(/===INICIO_JSON===([\s\S]*?)===FIM_JSON===/);
+  const bruto = entre ? entre[1] : (texto.match(/\{[\s\S]*\}/) || [])[0];
+  if (!bruto) throw new Error("A IA não devolveu texto reconhecível — resposta: " + texto.slice(0, 200));
+  try { return JSON.parse(bruto.trim()); }
+  catch { throw new Error("JSON da IA veio malformado: " + bruto.slice(0, 200)); }
+}
+
 async function preencherAtributosComIA(tituloML, marca, modelo, atributos) {
   const faltando = atributos.filter(a => a.obrigatorio);
-  if (!faltando.length || !ANTHROPIC_KEY) return [];
+  if (!faltando.length || (!GEMINI_KEY && !ANTHROPIC_KEY)) return [];
   const lista = faltando.map(a => ({
     id: a.id, nome: a.nome,
     valores: a.valores.length ? a.valores.map(v => `${v.id}="${v.nome}"`).join(", ") : "(texto livre)"
@@ -311,21 +352,13 @@ ${lista.map(a => `- ${a.nome} (id ${a.id}): opções [${a.valores}]`).join("\n")
 Se o atributo tiver opções de id listadas, responda com o id exato de uma delas. Se for texto livre, escreva um valor curto plausível.
 Responda SÓ com JSON entre ===INICIO_JSON=== e ===FIM_JSON===, no formato {"ID_DO_ATRIBUTO":"valor_ou_id"} para cada atributo acima.`;
   try {
-    const r = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "x-api-key": ANTHROPIC_KEY, "anthropic-version": "2023-06-01" },
-      body: JSON.stringify({ model: MODELO, max_tokens: 500, messages: [{ role: "user", content: prompt }] })
-    });
-    const j = await r.json();
-    const texto = (j.content || []).filter(c => c.type === "text").map(c => c.text).join("\n");
-    const m = texto.match(/===INICIO_JSON===([\s\S]*?)===FIM_JSON===/) || texto.match(/\{[\s\S]*\}/);
-    const valores = JSON.parse((m[1] || m[0]).trim());
+    const valores = extrairJSON(await chamarIA(prompt));
     return faltando.map(a => {
       const v = valores[a.id]; if (!v) return null;
       const bate = a.valores.find(x => x.id === v);
       return bate ? { id: a.id, value_id: bate.id } : { id: a.id, value_name: String(v) };
     }).filter(Boolean);
-  } catch { return []; } // sem IA disponível, segue sem — o ML vai listar o que falta no erro
+  } catch { return []; } // sem IA disponível ou falhou, segue sem — o ML vai listar o que falta no erro
 }
 
 // categoriza sozinho a partir do título e já devolve a ficha da categoria
@@ -399,7 +432,6 @@ app.post("/api/ler-ean", async (req, res) => {
 /* ---------- descrição automática ---------- */
 app.post("/api/gerar-texto", async (req, res) => {
   try {
-    if (!ANTHROPIC_KEY) throw new Error("Sem ANTHROPIC_API_KEY — preencha os destaques na mão");
     const { titulo, categoria, ficha } = req.body;
     const prompt = `Anúncio do canal Geek Antenado. Produto: ${titulo}. Categoria: ${categoria}.
 Observações/ficha: ${ficha || "nenhuma"}.
@@ -408,25 +440,7 @@ Depois de pesquisar, escreva a resposta final. Envolva o JSON final, e SÓ ele, 
 ===INICIO_JSON===
 {"intro":"1-2 frases descrevendo o produto e pra que serve, com algum dado técnico real já na abertura","destaques":["6 a 9 bullets de especificações técnicas reais e diferenciais do produto, cada um específico e verificado na pesquisa"],"fechamento":"1 frase de pra quem é indicado, ligada a um uso real do produto","titulo_ml":"título Mercado Livre: tipo do produto primeiro, depois marca e modelo, máximo 60 caracteres"}
 ===FIM_JSON===`;
-
-    const r = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "x-api-key": ANTHROPIC_KEY, "anthropic-version": "2023-06-01" },
-      body: JSON.stringify({
-        model: MODELO, max_tokens: 1800,
-        tools: [{ type: "web_search_20250305", name: "web_search" }],
-        messages: [{ role: "user", content: prompt }]
-      })
-    });
-    const j = await r.json();
-    if (j.error) throw new Error(j.error.message || "erro na API da Anthropic");
-    const textoCompleto = (j.content || []).filter(c => c.type === "text").map(c => c.text).join("\n");
-    const entre = textoCompleto.match(/===INICIO_JSON===([\s\S]*?)===FIM_JSON===/);
-    const bruto = entre ? entre[1] : (textoCompleto.match(/\{[\s\S]*\}/) || [])[0];
-    if (!bruto) throw new Error("A IA não devolveu texto reconhecível — resposta: " + textoCompleto.slice(0, 200));
-    let dados;
-    try { dados = JSON.parse(bruto.trim()); }
-    catch { throw new Error("JSON da IA veio malformado: " + bruto.slice(0, 200)); }
+    const dados = extrairJSON(await chamarIA(prompt));
     res.json({ ok: true, ...dados });
   } catch (e) { res.status(400).json({ ok: false, erro: e.message }); }
 });
@@ -664,7 +678,7 @@ async function publicarUm(job, b, ctx) {
 
 app.get("/api/historico", (_, res) => res.json(readJson(LOG_FILE, []).slice(0, 20)));
 app.get("/api/status", async (_, res) => {
-  const s = { shopify: false, drive: false, ia: !!ANTHROPIC_KEY, ml: false, pastaPadrao: DEFAULT_FOLDER, erros: {} };
+  const s = { shopify: false, drive: false, ia: !!(GEMINI_KEY || ANTHROPIC_KEY), iaProvedor: GEMINI_KEY ? "Gemini" : (ANTHROPIC_KEY ? "Anthropic" : null), ml: false, pastaPadrao: DEFAULT_FOLDER, erros: {} };
   s.diagnostico = {
     arquivoTokenML: fs.existsSync(TOKEN_FILE),
     arquivoTokenShopify: fs.existsSync(SHOP_TOKEN_FILE),

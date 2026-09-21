@@ -77,8 +77,8 @@ para conectar as duas contas. Os tokens ficam em `data/` e se renovam sozinhos.
 3. **EAN** — cole quando tiver a caixa em mãos; pode deixar em branco.
 4. **Preço Shopify** e **Preço Mercado Livre** — separados de propósito, cada plataforma tem o
    seu. Deixe um em branco pra anunciar só na outra.
-5. **Anunciar** — busca as fotos, gera a descrição por IA (se a `ANTHROPIC_API_KEY` estiver
-   configurada; senão sai um texto básico), detecta a categoria do Mercado Livre sozinho, e
+5. **Anunciar** — busca as fotos, gera a descrição por IA (se `GEMINI_API_KEY` ou
+   `ANTHROPIC_API_KEY` estiver configurada; senão sai um texto básico), detecta a categoria do Mercado Livre sozinho, e
    publica nas duas plataformas com barra de progresso passo a passo.
 
 Sem foto encontrada pra esse nome, o painel avisa e não publica em nenhuma plataforma — evita
