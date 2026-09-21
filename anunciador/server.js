@@ -26,6 +26,9 @@ const SHOP_STATIC_TOKEN = env.SHOPIFY_ADMIN_TOKEN || ""; // opcional, se algum d
 const SHOP_TOKEN_FILE = path.join(DATA, "shopify_token.json");
 
 const DRIVE_KEY = env.GOOGLE_API_KEY;
+const GOOGLE_CLIENT_ID = env.GOOGLE_OAUTH_CLIENT_ID || "";
+const GOOGLE_CLIENT_SECRET = env.GOOGLE_OAUTH_CLIENT_SECRET || "";
+const GOOGLE_TOKEN_FILE = path.join(DATA, "google_token.json");
 const DEFAULT_FOLDER = env.DRIVE_DEFAULT_FOLDER || "";
 
 const ML_CLIENT_ID = env.ML_CLIENT_ID;
@@ -44,7 +47,7 @@ const writeJson = (f, o) => fs.writeFileSync(f, JSON.stringify(o, null, 2));
 
 /* ---------- senha ---------- */
 app.use((req, res, next) => {
-  if (!env.APP_PASSWORD || req.path.startsWith("/auth/ml") || req.path.startsWith("/auth/shopify") || req.path.startsWith("/img/")) return next();
+  if (!env.APP_PASSWORD || req.path.startsWith("/auth/ml") || req.path.startsWith("/auth/shopify") || req.path.startsWith("/auth/google") || req.path.startsWith("/img/")) return next();
   const h = req.headers.authorization || "";
   const [, p] = Buffer.from(h.split(" ")[1] || "", "base64").toString().split(":");
   if (p === env.APP_PASSWORD) return next();
@@ -71,15 +74,65 @@ app.get("/api/fotos", async (req, res) => {
   } catch (e) { res.status(400).json({ ok: false, erro: e.message }); }
 });
 
+app.get("/auth/google", (req, res) => {
+  if (!GOOGLE_CLIENT_ID) return res.status(400).send("GOOGLE_OAUTH_CLIENT_ID não configurado no .env");
+  const u = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${GOOGLE_CLIENT_ID}` +
+    `&redirect_uri=${encodeURIComponent(`${BASE_URL}/auth/google/callback`)}` +
+    `&response_type=code&access_type=offline&prompt=consent` +
+    `&scope=${encodeURIComponent("https://www.googleapis.com/auth/drive.readonly")}`;
+  res.redirect(u);
+});
+
+app.get("/auth/google/callback", async (req, res) => {
+  try {
+    const r = await fetch("https://oauth2.googleapis.com/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        code: req.query.code, client_id: GOOGLE_CLIENT_ID, client_secret: GOOGLE_CLIENT_SECRET,
+        redirect_uri: `${BASE_URL}/auth/google/callback`, grant_type: "authorization_code"
+      })
+    });
+    const j = await r.json();
+    if (!j.access_token) throw new Error(JSON.stringify(j));
+    writeJson(GOOGLE_TOKEN_FILE, { ...j, obtido_em: Date.now() });
+    res.send("Google Drive conectado. Pode fechar esta aba.");
+  } catch (e) { res.status(400).send("Falha ao conectar: " + e.message); }
+});
+
+async function googleToken() {
+  const t = readJson(GOOGLE_TOKEN_FILE, null);
+  if (!t?.refresh_token) return null; // sem login feito — quem chamar cai pro modo com API key
+  if (t.access_token && Date.now() - t.obtido_em < (t.expires_in - 300) * 1000) return t.access_token;
+  const r = await fetch("https://oauth2.googleapis.com/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      client_id: GOOGLE_CLIENT_ID, client_secret: GOOGLE_CLIENT_SECRET,
+      refresh_token: t.refresh_token, grant_type: "refresh_token"
+    })
+  });
+  const j = await r.json();
+  if (!j.access_token) throw new Error("Não consegui renovar o login do Google — abra /auth/google e reconecte");
+  writeJson(GOOGLE_TOKEN_FILE, { ...t, ...j, obtido_em: Date.now() }); // Google não reenvia refresh_token toda vez — mantém o antigo
+  return j.access_token;
+}
+
 const baixarDrive = async (id, tentativa = 1) => {
-  const r = await fetch(`https://www.googleapis.com/drive/v3/files/${id}?alt=media&key=${DRIVE_KEY}`);
+  const tokenGoogle = await googleToken().catch(() => null);
+  const url = tokenGoogle
+    ? `https://www.googleapis.com/drive/v3/files/${id}?alt=media`
+    : `https://www.googleapis.com/drive/v3/files/${id}?alt=media&key=${DRIVE_KEY}`;
+  const r = await fetch(url, tokenGoogle ? { headers: { Authorization: `Bearer ${tokenGoogle}` } } : {});
   if (!r.ok) {
     // pode ser instabilidade passageira (rede/cota) — tenta mais uma vez antes de desistir
     if (tentativa === 1) { await new Promise(res => setTimeout(res, 800)); return baixarDrive(id, 2); }
     const corpo = await r.text().catch(() => "");
     let motivo = corpo;
     try { motivo = JSON.parse(corpo)?.error?.message || corpo; } catch { /* mantém texto cru */ }
-    const dica = r.status === 403 ? " — confira se a pasta está compartilhada como \"Qualquer pessoa com o link\" no Drive" : "";
+    const dica = r.status === 403
+      ? (tokenGoogle ? " — confira se sua conta do Google tem acesso a essa pasta" : " — conecte o Google em /auth/google para baixar com login em vez de chave de API")
+      : "";
     throw new Error(`Drive recusou o arquivo ${id} (HTTP ${r.status}): ${motivo.slice(0, 200) || "sem detalhes"}${dica}`);
   }
   return { buf: Buffer.from(await r.arrayBuffer()), tipo: r.headers.get("content-type") || "image/jpeg" };
@@ -587,6 +640,8 @@ app.get("/api/status", async (_, res) => {
     if (j.error) throw new Error(j.error.message);
     s.drive = true;
   } catch (e) { s.erros.drive = e.message.slice(0, 160); }
+  s.driveComLogin = !!readJson(GOOGLE_TOKEN_FILE, null)?.refresh_token;
+  s.driveConectar = !s.driveComLogin && !!GOOGLE_CLIENT_ID;
   try {
     await mlToken();
     s.ml = true;
