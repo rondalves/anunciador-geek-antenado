@@ -296,6 +296,38 @@ async function detalhesCategoria(token, id) {
   return { categoria: cat.name, caminho: (cat.path_from_root || []).map(c => c.name).join(" › "), atributos };
 }
 
+// pede pra IA preencher os atributos obrigatórios da categoria que o formulário simplificado não coleta
+// (cada categoria do ML pede coisas diferentes — voltagem, cor, linha etc. — sem isso a publicação é recusada)
+async function preencherAtributosComIA(tituloML, marca, modelo, atributos) {
+  const faltando = atributos.filter(a => a.obrigatorio);
+  if (!faltando.length || !ANTHROPIC_KEY) return [];
+  const lista = faltando.map(a => ({
+    id: a.id, nome: a.nome,
+    valores: a.valores.length ? a.valores.map(v => `${v.id}="${v.nome}"`).join(", ") : "(texto livre)"
+  }));
+  const prompt = `Produto: ${tituloML}. Marca: ${marca}. Modelo: ${modelo}.
+Preencha estes atributos obrigatórios do Mercado Livre com o valor mais provável pra este produto específico:
+${lista.map(a => `- ${a.nome} (id ${a.id}): opções [${a.valores}]`).join("\n")}
+Se o atributo tiver opções de id listadas, responda com o id exato de uma delas. Se for texto livre, escreva um valor curto plausível.
+Responda SÓ com JSON entre ===INICIO_JSON=== e ===FIM_JSON===, no formato {"ID_DO_ATRIBUTO":"valor_ou_id"} para cada atributo acima.`;
+  try {
+    const r = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-api-key": ANTHROPIC_KEY, "anthropic-version": "2023-06-01" },
+      body: JSON.stringify({ model: MODELO, max_tokens: 500, messages: [{ role: "user", content: prompt }] })
+    });
+    const j = await r.json();
+    const texto = (j.content || []).filter(c => c.type === "text").map(c => c.text).join("\n");
+    const m = texto.match(/===INICIO_JSON===([\s\S]*?)===FIM_JSON===/) || texto.match(/\{[\s\S]*\}/);
+    const valores = JSON.parse((m[1] || m[0]).trim());
+    return faltando.map(a => {
+      const v = valores[a.id]; if (!v) return null;
+      const bate = a.valores.find(x => x.id === v);
+      return bate ? { id: a.id, value_id: bate.id } : { id: a.id, value_name: String(v) };
+    }).filter(Boolean);
+  } catch { return []; } // sem IA disponível, segue sem — o ML vai listar o que falta no erro
+}
+
 // categoriza sozinho a partir do título e já devolve a ficha da categoria
 app.get("/api/ml/auto", async (req, res) => {
   try {
@@ -369,33 +401,32 @@ app.post("/api/gerar-texto", async (req, res) => {
   try {
     if (!ANTHROPIC_KEY) throw new Error("Sem ANTHROPIC_API_KEY — preencha os destaques na mão");
     const { titulo, categoria, ficha } = req.body;
+    const prompt = `Anúncio do canal Geek Antenado. Produto: ${titulo}. Categoria: ${categoria}.
+Observações/ficha: ${ficha || "nenhuma"}.
+Pesquise na internet a ficha técnica real desse produto específico (processador, tela, bateria, câmera, conectividade, material, capacidade — o que for relevante pra categoria) antes de escrever. Nada de texto genérico que serviria pra qualquer produto da categoria.
+Depois de pesquisar, escreva a resposta final. Envolva o JSON final, e SÓ ele, entre as marcas ===INICIO_JSON=== e ===FIM_JSON=== — sem markdown, sem \`\`\` dentro das marcas:
+===INICIO_JSON===
+{"intro":"1-2 frases descrevendo o produto e pra que serve, com algum dado técnico real já na abertura","destaques":["6 a 9 bullets de especificações técnicas reais e diferenciais do produto, cada um específico e verificado na pesquisa"],"fechamento":"1 frase de pra quem é indicado, ligada a um uso real do produto","titulo_ml":"título Mercado Livre: tipo do produto primeiro, depois marca e modelo, máximo 60 caracteres"}
+===FIM_JSON===`;
+
     const r = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
       headers: { "Content-Type": "application/json", "x-api-key": ANTHROPIC_KEY, "anthropic-version": "2023-06-01" },
       body: JSON.stringify({
-        model: MODELO, max_tokens: 1500,
+        model: MODELO, max_tokens: 1800,
         tools: [{ type: "web_search_20250305", name: "web_search" }],
-        messages: [{
-          role: "user",
-          content: `Anúncio do canal Geek Antenado. Produto: ${titulo}. Categoria: ${categoria}.
-Observações/ficha: ${ficha || "nenhuma"}.
-Pesquise na internet a ficha técnica real desse produto específico (processador, tela, bateria, câmera, conectividade, material, capacidade — o que for relevante pra categoria) antes de escrever. Nada de texto genérico que serviria pra qualquer produto da categoria.
-Depois de pesquisar, responda SÓ com um bloco de texto contendo APENAS o JSON abaixo, sem markdown, sem \`\`\`, sem nenhum texto antes ou depois:
-{"intro":"1-2 frases descrevendo o produto e pra que serve, com algum dado técnico real já na abertura","destaques":["6 a 9 bullets de especificações técnicas reais e diferenciais do produto, cada um específico e verificado na pesquisa"],"fechamento":"1 frase de pra quem é indicado, ligada a um uso real do produto","titulo_ml":"título Mercado Livre: tipo do produto primeiro, depois marca e modelo, máximo 60 caracteres"}`
-        }]
+        messages: [{ role: "user", content: prompt }]
       })
     });
     const j = await r.json();
     if (j.error) throw new Error(j.error.message || "erro na API da Anthropic");
-    // com busca web ligada, a resposta pode ter vários blocos de texto (raciocínio + resultado);
-    // o JSON válido normalmente é o último bloco de texto, então tenta do fim pra início
-    const blocos = (j.content || []).filter(c => c.type === "text").map(c => c.text);
-    let dados = null;
-    for (let i = blocos.length - 1; i >= 0 && !dados; i--) {
-      const m = blocos[i].match(/\{[\s\S]*\}/);
-      if (m) { try { dados = JSON.parse(m[0]); } catch { /* tenta o próximo bloco */ } }
-    }
-    if (!dados) throw new Error("A IA não devolveu um JSON válido — tente de novo");
+    const textoCompleto = (j.content || []).filter(c => c.type === "text").map(c => c.text).join("\n");
+    const entre = textoCompleto.match(/===INICIO_JSON===([\s\S]*?)===FIM_JSON===/);
+    const bruto = entre ? entre[1] : (textoCompleto.match(/\{[\s\S]*\}/) || [])[0];
+    if (!bruto) throw new Error("A IA não devolveu texto reconhecível — resposta: " + textoCompleto.slice(0, 200));
+    let dados;
+    try { dados = JSON.parse(bruto.trim()); }
+    catch { throw new Error("JSON da IA veio malformado: " + bruto.slice(0, 200)); }
     res.json({ ok: true, ...dados });
   } catch (e) { res.status(400).json({ ok: false, erro: e.message }); }
 });
@@ -453,7 +484,7 @@ function encerrar(id) {
 async function publicarLote(job, lista) {
   const ctx = {
     passo: 0,
-    total: lista.reduce((a, b) => a + (b.shopify ? 4 : 0) + (b.ml ? 4 + (b.fotos || []).length : 0), 0) || 1
+    total: lista.reduce((a, b) => a + (b.shopify ? 5 : 0) + (b.ml ? 5 + (b.fotos || []).length : 0), 0) || 1
   };
   const resultados = [];
   for (const [i, b] of lista.entries()) {
@@ -571,6 +602,14 @@ async function publicarUm(job, b, ctx) {
       }
       if (!categoria) throw new Error("não consegui identificar a categoria — descreva melhor o produto no título");
 
+      etapa("Conferindo atributos obrigatórios da categoria");
+      let atributosIA = [];
+      try {
+        const det = await detalhesCategoria(token, categoria);
+        atributosIA = await preencherAtributosComIA(p.tituloML, p.marca, p.modelo, det.atributos);
+        if (atributosIA.length) out.avisos.push(`Atributos preenchidos automaticamente: ${atributosIA.map(a => a.id).join(", ")}`);
+      } catch (e) { out.avisos.push("Não consegui checar atributos da categoria antes: " + e.message.slice(0, 120)); }
+
       const pictures = [];
       for (const [i, url] of fotos.entries()) {
         etapa(`Enviando foto ${i + 1} de ${fotos.length} para o Mercado Livre`);
@@ -583,6 +622,7 @@ async function publicarUm(job, b, ctx) {
         ...(p.marca ? [{ id: "BRAND", value_name: p.marca }] : []),
         ...(p.modelo ? [{ id: "MODEL", value_name: p.modelo }] : []),
         ...(p.ean ? [{ id: "GTIN", value_name: p.ean }] : []),
+        ...atributosIA,
         ...(b.atributosML || []).filter(a => a.value_id || a.value_name)
       ];
       const corpo = {

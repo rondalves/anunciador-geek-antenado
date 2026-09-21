@@ -106,6 +106,7 @@ button{font:inherit;font-weight:700;border-radius:12px;border:none;cursor:pointe
 <script>
 const $ = id => document.getElementById(id);
 const brl = n => (n || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+let avisoIA = "";
 
 fetch("/api/status").then(r => r.json()).then(s => {
   const pino = (nome, ok) => `<span class="pino ${ok ? "on" : ""}"><i></i>${nome}</span>`;
@@ -117,6 +118,7 @@ fetch("/api/status").then(r => r.json()).then(s => {
 });
 
 async function anunciar() {
+  avisoIA = "";
   const titulo = $("titulo").value.trim();
   const precoShopify = parseFloat($("precoShopify").value) || 0;
   const precoML = parseFloat($("precoML").value) || 0;
@@ -143,7 +145,8 @@ async function anunciar() {
         body: JSON.stringify({ titulo, categoria: "", ficha: "" })
       })).json();
       if (jt.ok) { intro = jt.intro || ""; destaques = jt.destaques || []; fechamento = jt.fechamento || ""; if (jt.titulo_ml) tituloML = jt.titulo_ml.slice(0, 60); }
-    } catch { /* segue sem IA */ }
+      else avisoIA = jt.erro || "falhou sem detalhe";
+    } catch (e) { avisoIA = "não consegui falar com a IA: " + e.message; }
 
     const partes = titulo.split(" ");
     const marca = partes[0] || "";
@@ -209,6 +212,7 @@ function finalizar(lista) {
   $("barra").style.width = "100%"; $("pct").textContent = "100%"; $("rotulo").textContent = "concluído";
   const r = lista[0];
   const l = [`<b>${r.produto}</b>`];
+  if (avisoIA) l.push(`<span class="ruim">Descrição automática falhou:</span> <span class="dica">${avisoIA}</span> — publicado com o texto básico.`);
   if (r.erro) l.push(`<span class="ruim">${r.erro}</span>${acaoParaErro(r.erro)}`);
   if (r.shopify) l.push(r.shopify.ok
     ? `<span class="bom">Shopify ${r.shopify.rascunho ? "em rascunho" : "publicado"}</span> — <a href="${r.shopify.admin}" target="_blank">abrir</a> (${brl(r.precoShopify)})`
