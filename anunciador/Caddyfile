@@ -1,0 +1,3 @@
+anuncios.geekantenado.com {
+	reverse_proxy anunciador:8080
+}
