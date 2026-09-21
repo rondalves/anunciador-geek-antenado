@@ -564,6 +564,11 @@ async function publicarUm(job, b, ctx) {
 app.get("/api/historico", (_, res) => res.json(readJson(LOG_FILE, []).slice(0, 20)));
 app.get("/api/status", async (_, res) => {
   const s = { shopify: false, drive: false, ia: !!ANTHROPIC_KEY, ml: false, pastaPadrao: DEFAULT_FOLDER, erros: {} };
+  s.diagnostico = {
+    arquivoTokenML: fs.existsSync(TOKEN_FILE),
+    arquivoTokenShopify: fs.existsSync(SHOP_TOKEN_FILE),
+    pastaDataGravavel: (() => { try { fs.accessSync(DATA, fs.constants.W_OK); return true; } catch { return false; } })()
+  };
   try { await gql(`{ shop { name } }`); s.shopify = true; }
   catch (e) { s.erros.shopify = e.message.slice(0, 160); s.shopifyConectar = !SHOP_STATIC_TOKEN; }
   try {
@@ -574,7 +579,12 @@ app.get("/api/status", async (_, res) => {
     if (j.error) throw new Error(j.error.message);
     s.drive = true;
   } catch (e) { s.erros.drive = e.message.slice(0, 160); }
-  try { await mlToken(); s.ml = true; } catch (e) { s.erros.ml = e.message.slice(0, 160); }
+  try {
+    await mlToken();
+    s.ml = true;
+    const t = readJson(TOKEN_FILE, null);
+    if (t) s.diagnostico.mlTokenObtidoEm = new Date(t.obtido_em).toISOString();
+  } catch (e) { s.erros.ml = e.message.slice(0, 160); }
   res.json(s);
 });
 
