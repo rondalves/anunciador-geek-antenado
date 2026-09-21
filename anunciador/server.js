@@ -153,23 +153,40 @@ app.get("/auth/ml/callback", async (req, res) => {
   } catch (e) { res.status(400).send("Falha ao conectar: " + e.message); }
 });
 
+let renovandoML = null; // trava: evita duas renovações simultâneas gastarem o mesmo refresh_token
+
 async function mlToken() {
   let t = readJson(TOKEN_FILE, null);
   if (!t?.refresh_token && ML_REFRESH_SEED) t = { refresh_token: ML_REFRESH_SEED, obtido_em: 0, expires_in: 0 };
   if (!t?.refresh_token) throw new Error("Mercado Livre não conectado — preencha ML_REFRESH_TOKEN no .env ou abra /auth/ml");
   if (t.access_token && Date.now() - t.obtido_em < (t.expires_in - 600) * 1000) return t.access_token;
-  const r = await fetch("https://api.mercadolibre.com/oauth/token", {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded", accept: "application/json" },
-    body: new URLSearchParams({
-      grant_type: "refresh_token", client_id: ML_CLIENT_ID,
-      client_secret: ML_CLIENT_SECRET, refresh_token: t.refresh_token
-    })
-  });
-  const j = await r.json();
-  if (!j.access_token) throw new Error("Refresh token do ML inválido ou já usado — abra /auth/ml e reconecte");
-  writeJson(TOKEN_FILE, { ...j, obtido_em: Date.now() });
-  return j.access_token;
+
+  // já tem uma renovação em andamento (outra publicação/aba pediu ao mesmo tempo) — espera ela e reaproveita
+  if (renovandoML) return renovandoML;
+
+  renovandoML = (async () => {
+    try {
+      const r = await fetch("https://api.mercadolibre.com/oauth/token", {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded", accept: "application/json" },
+        body: new URLSearchParams({
+          grant_type: "refresh_token", client_id: ML_CLIENT_ID,
+          client_secret: ML_CLIENT_SECRET, refresh_token: t.refresh_token
+        })
+      });
+      const j = await r.json();
+      if (j.access_token) { writeJson(TOKEN_FILE, { ...j, obtido_em: Date.now() }); return j.access_token; }
+
+      // refresh_token recusado — pode ser que OUTRA renovação, concorrente, já tenha girado ele antes desta.
+      // Relê o arquivo: se alguém já salvou um token mais novo enquanto esperávamos, usa esse em vez de falhar.
+      const atual = readJson(TOKEN_FILE, null);
+      if (atual?.access_token && atual.refresh_token !== t.refresh_token) return atual.access_token;
+
+      throw new Error("Refresh token do ML inválido ou já usado — abra /auth/ml e reconecte");
+    } finally { renovandoML = null; }
+  })();
+
+  return renovandoML;
 }
 
 async function mlApi(url, token, opts = {}) {
