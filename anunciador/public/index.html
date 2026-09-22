@@ -35,6 +35,20 @@ select{background-image:linear-gradient(45deg,transparent 50%,var(--suave) 50%),
   background-size:5px 5px,5px 5px;background-repeat:no-repeat;padding-right:38px;cursor:pointer}
 input:focus,select:focus{outline:none;border-color:var(--ciano);box-shadow:0 0 0 3px rgba(46,230,214,.15)}
 
+/* fila de produtos */
+#fila{width:100%;max-width:480px;margin-top:14px;display:none}
+#fila.ver{display:block}
+.itemFila{display:flex;align-items:center;gap:10px;background:var(--painel);border:1px solid var(--linha);
+  border-radius:12px;padding:12px 14px;margin-bottom:8px}
+.itemFila .nome{flex:1;min-width:0;font-size:13.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.itemFila .valores{font-size:12px;color:var(--suave);white-space:nowrap}
+.itemFila button{background:transparent;color:var(--suave);font-size:20px;line-height:1;padding:0 4px;font-weight:400}
+.itemFila button:hover{color:var(--erro)}
+.contaFila{font-size:12.5px;color:var(--suave);margin:0 0 8px}
+.secundario{background:#20252c;color:var(--texto);width:100%;padding:14px;font-size:15px;margin-top:12px}
+.secundario:hover:not(:disabled){filter:brightness(1.25)}
+.secundario:disabled{opacity:.5;cursor:not-allowed}
+
 /* bloco do Mercado Livre */
 #blocoML{margin-top:20px;padding-top:18px;border-top:1px solid var(--linha)}
 #blocoML.carregando{opacity:.5}
@@ -111,8 +125,11 @@ button{font:inherit;font-weight:700;border-radius:12px;border:none;cursor:pointe
     <div class="dica" id="dicaML"></div>
   </div>
 
+  <button class="secundario" id="btAdicionar">+ Adicionar outro produto</button>
   <button class="anunciar" id="btAnunciar">Anunciar</button>
 </div>
+
+<div id="fila"></div>
 
 <div class="historico" id="historico"></div>
 
@@ -195,6 +212,7 @@ async function preverML(categoriaEscolhida) {
   } finally { $("blocoML").classList.remove("carregando"); }
 }
 $("titulo").addEventListener("blur", () => preverML());
+$("titulo").addEventListener("input", desenharFila);
 
 function coletarAtributosML() {
   return [...document.querySelectorAll("#atributosML [data-attr]")]
@@ -204,72 +222,118 @@ function coletarAtributosML() {
       : { id: el.dataset.attr, value_name: (el.selectedOptions ? el.selectedOptions[0].textContent : el.value).trim() });
 }
 
-async function anunciar() {
-  avisoIA = "";
+let fila = [];
+
+// tira do formulário um produto pronto, ou null com o motivo em alert.
+// Cada produto leva a categoria e os atributos que foram resolvidos PARA ELE.
+function produtoDoFormulario() {
   const titulo = $("titulo").value.trim();
   const precoShopify = parseFloat($("precoShopify").value) || 0;
   const precoML = parseFloat($("precoML").value) || 0;
-  if (!titulo) return alert("Falta o nome do produto.");
-  if (!precoShopify && !precoML) return alert("Preencha o preço de pelo menos uma plataforma.");
-  if (!$("pasta").value.trim()) return alert("Falta a pasta de fotos.");
+  if (!titulo) { alert("Falta o nome do produto."); return null; }
+  if (!precoShopify && !precoML) { alert("Preencha o preço de pelo menos uma plataforma."); return null; }
+  if (!$("pasta").value.trim()) { alert("Falta a pasta de fotos."); return null; }
   // barra aqui em vez de deixar o ML recusar depois de subir todas as fotos
   if (precoML > 0 && atributosML.length) {
     const preenchidos = new Set(coletarAtributosML().map(a => a.id));
     const vazios = atributosML.filter(a => !preenchidos.has(a.id)).map(a => a.nome);
-    if (vazios.length) return alert(`O Mercado Livre exige: ${vazios.join(", ")}.
-Preencha antes de anunciar.`);
+    if (vazios.length) { alert(`O Mercado Livre exige: ${vazios.join(", ")}.\nPreencha antes de anunciar.`); return null; }
   }
+  const partes = titulo.split(" ");
+  return {
+    titulo, tituloML: titulo.slice(0, 60), marca: partes[0] || "", modelo: partes.slice(1).join(" ") || titulo,
+    categoria: "", categoriaML, ean: $("ean").value, estoque: 1,
+    precoShopify: precoShopify || undefined, precoML: precoML || undefined,
+    usado: $("usado").checked, intro: "", fechamento: "", destaques: [],
+    tags: [], fotos: [], atributosML: coletarAtributosML(),
+    garantiaTipo: "Garantia do vendedor", garantiaTempo: "30 dias", freteGratis: false,
+    shopify: precoShopify > 0, ml: precoML > 0
+  };
+}
+
+function limparFormulario() {
+  ["titulo", "ean", "precoShopify", "precoML"].forEach(i => $(i).value = "");
+  $("blocoML").hidden = true; $("atributosML").innerHTML = ""; $("trocaCat").hidden = true;
+  atributosML = []; categoriaML = "";
+}
+
+function desenharFila() {
+  $("fila").classList.toggle("ver", fila.length > 0);
+  // o formulário só conta se tiver produto digitado
+  const total = fila.length + ($("titulo").value.trim() ? 1 : 0);
+  $("btAnunciar").textContent = total > 1 ? `Anunciar ${total} produtos` : "Anunciar";
+  if (!fila.length) return $("fila").innerHTML = "";
+  $("fila").innerHTML = `<div class="contaFila">${fila.length} produto(s) na fila${$("titulo").value.trim() ? " — o do formulário entra junto" : ""}</div>` +
+    fila.map((p, i) => `<div class="itemFila">
+      <span class="nome">${p.titulo}</span>
+      <span class="valores">${[p.precoShopify && "Shopify " + brl(p.precoShopify), p.precoML && "ML " + brl(p.precoML)].filter(Boolean).join(" · ")}</span>
+      <button title="tirar da fila" onclick="tirarDaFila(${i})">&times;</button>
+    </div>`).join("");
+}
+function tirarDaFila(i) { fila.splice(i, 1); desenharFila(); }
+
+function adicionarProduto() {
+  const p = produtoDoFormulario();
+  if (!p) return;
+  fila.push(p);
+  limparFormulario();
+  desenharFila();
+  $("titulo").focus();
+}
+
+async function anunciar() {
+  avisoIA = "";
+  // o que está no formulário entra na fila; se o formulário estiver vazio, publica só a fila
+  const lista = [...fila];
+  if ($("titulo").value.trim()) {
+    const p = produtoDoFormulario();
+    if (!p) return;
+    lista.push(p);
+  }
+  if (!lista.length) return alert("Nenhum produto para anunciar.");
 
   const b = $("btAnunciar"); b.disabled = true; b.textContent = "Buscando fotos…";
+  $("btAdicionar").disabled = true;
   $("modal").classList.add("ver");
   $("passos").innerHTML = ""; $("final").hidden = true; $("rodapeModal").hidden = true;
-  $("barra").style.width = "5%"; $("pct").textContent = "5%"; $("rotulo").textContent = "buscando fotos no Drive…";
+  $("barra").style.width = "5%"; $("pct").textContent = "5%";
 
   try {
-    const jf = await (await fetch(`/api/fotos?pasta=${encodeURIComponent($("pasta").value)}&nome=${encodeURIComponent(titulo)}`)).json();
-    if (!jf.ok) throw new Error(jf.erro);
-    const fotos = jf.files.map(f => f.url);
-    if (!fotos.length) throw new Error(`Nenhuma foto encontrada para "${titulo}" nessa pasta. Confira o nome dos arquivos.`);
+    const pasta = $("pasta").value;
+    for (const [i, p] of lista.entries()) {
+      $("rotulo").textContent = `buscando fotos de ${p.titulo} (${i + 1} de ${lista.length})…`;
+      const jf = await (await fetch(`/api/fotos?pasta=${encodeURIComponent(pasta)}&nome=${encodeURIComponent(p.titulo)}`)).json();
+      if (!jf.ok) throw new Error(`${p.titulo}: ${jf.erro}`);
+      p.fotos = jf.files.map(f => f.url);
+      if (!p.fotos.length) throw new Error(`Nenhuma foto encontrada para "${p.titulo}" nessa pasta. Confira o nome dos arquivos.`);
 
-    $("rotulo").textContent = "escrevendo descrição…"; $("barra").style.width = "10%"; $("pct").textContent = "10%";
-    let intro = "", destaques = [], fechamento = "", tituloML = titulo.slice(0, 60);
-    try {
-      const jt = await (await fetch("/api/gerar-texto", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ titulo, categoria: "", ficha: "" })
-      })).json();
-      if (jt.ok) { intro = jt.intro || ""; destaques = jt.destaques || []; fechamento = jt.fechamento || ""; if (jt.titulo_ml) tituloML = jt.titulo_ml.slice(0, 60); }
-      else avisoIA = jt.erro || "falhou sem detalhe";
-    } catch (e) { avisoIA = "não consegui falar com a IA: " + e.message; }
-
-    const partes = titulo.split(" ");
-    const marca = partes[0] || "";
-    const modelo = partes.slice(1).join(" ") || titulo;
-
-    const corpo = {
-      produtos: [{
-        titulo, tituloML, marca, modelo, categoria: "", categoriaML,
-        ean: $("ean").value, estoque: 1,
-        precoShopify: precoShopify || undefined, precoML: precoML || undefined,
-        usado: $("usado").checked, intro, fechamento, destaques,
-        tags: [], fotos, atributosML: coletarAtributosML(),
-        garantiaTipo: "Garantia do vendedor", garantiaTempo: "30 dias", freteGratis: false,
-        shopify: precoShopify > 0, ml: precoML > 0
-      }]
-    };
+      $("rotulo").textContent = `escrevendo descrição de ${p.titulo}…`;
+      try {
+        const jt = await (await fetch("/api/gerar-texto", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ titulo: p.titulo, categoria: "", ficha: "" })
+        })).json();
+        if (jt.ok) {
+          p.intro = jt.intro || ""; p.destaques = jt.destaques || []; p.fechamento = jt.fechamento || "";
+          if (jt.titulo_ml) p.tituloML = jt.titulo_ml.slice(0, 60);
+        } else if (!avisoIA) avisoIA = jt.erro || "falhou sem detalhe";
+      } catch (e) { if (!avisoIA) avisoIA = "não consegui falar com a IA: " + e.message; }
+      $("barra").style.width = `${5 + Math.round((i + 1) / lista.length * 10)}%`;
+    }
 
     b.textContent = "Publicando…";
     const j = await (await fetch("/api/publicar", {
-      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(corpo)
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ produtos: lista })
     })).json();
     acompanhar(j.job);
   } catch (e) {
     $("rotulo").innerHTML = `<span class="ruim">${e.message}</span>`;
     $("rodapeModal").hidden = false;
-    b.disabled = false; b.textContent = "Anunciar";
+    b.disabled = false; $("btAdicionar").disabled = false; desenharFila();
   }
 }
 $("btAnunciar").onclick = anunciar;
+$("btAdicionar").onclick = adicionarProduto;
 
 function acompanhar(job) {
   const es = new EventSource(`/api/progresso/${job}`);
@@ -303,28 +367,38 @@ function acaoParaErro(msg) {
 }
 
 function finalizar(lista) {
-  $("barra").style.width = "100%"; $("pct").textContent = "100%"; $("rotulo").textContent = "concluído";
-  const r = lista[0];
-  const l = [`<b>${r.produto}</b>`];
-  if (avisoIA) l.push(`<span class="ruim">Descrição automática falhou:</span> <span class="dica">${avisoIA}</span> — publicado com o texto básico.`);
-  if (r.erro) l.push(`<span class="ruim">${r.erro}</span>${acaoParaErro(r.erro)}`);
-  if (r.shopify) l.push(r.shopify.ok
-    ? `<span class="bom">Shopify ${r.shopify.rascunho ? "em rascunho" : "publicado"}</span> — <a href="${r.shopify.admin}" target="_blank">abrir</a> (${brl(r.precoShopify)})`
-    : `<span class="ruim">Shopify:</span> ${r.shopify.erro}${acaoParaErro(r.shopify.erro)}`);
-  if (r.ml) l.push(r.ml.ok
-    ? `<span class="bom">Mercado Livre ${r.ml.status}</span> — <a href="${r.ml.url}" target="_blank">ver anúncio</a> (${brl(r.precoML)})`
-    : `<span class="ruim">Mercado Livre:</span> ${r.ml.erro}${acaoParaErro(r.ml.erro)}`);
-  (r.avisos || []).forEach(a => l.push(`<span class="dica">${a}</span>`));
+  $("barra").style.width = "100%"; $("pct").textContent = "100%";
+  const ok = lista.filter(r => r.shopify?.ok || r.ml?.ok).length;
+  $("rotulo").textContent = lista.length > 1 ? `concluído — ${ok} de ${lista.length} publicados` : "concluído";
+
+  const l = [];
+  if (avisoIA) l.push(`<span class="ruim">Descrição automática falhou:</span> <span class="dica">${avisoIA}</span> — publicado com a descrição montada do título.`);
+  for (const r of lista) {
+    l.push(`<b>${r.produto}</b>`);
+    if (r.erro) l.push(`<span class="ruim">${r.erro}</span>${acaoParaErro(r.erro)}`);
+    if (r.shopify) l.push(r.shopify.ok
+      ? `<span class="bom">Shopify ${r.shopify.rascunho ? "em rascunho" : "publicado"}</span> — <a href="${r.shopify.admin}" target="_blank">abrir</a> (${brl(r.precoShopify)})`
+      : `<span class="ruim">Shopify:</span> ${r.shopify.erro}${acaoParaErro(r.shopify.erro)}`);
+    if (r.ml) l.push(r.ml.ok
+      ? `<span class="bom">Mercado Livre ${r.ml.status}</span> — <a href="${r.ml.url}" target="_blank">ver anúncio</a> (${brl(r.precoML)})`
+      : `<span class="ruim">Mercado Livre:</span> ${r.ml.erro}${acaoParaErro(r.ml.erro)}`);
+    (r.avisos || []).forEach(a => l.push(`<span class="dica">${a}</span>`));
+  }
   $("final").innerHTML = l.map(x => `<div class="linha">${x}</div>`).join(""); $("final").hidden = false; $("rodapeModal").hidden = false;
-  $("btAnunciar").disabled = false; $("btAnunciar").textContent = "Anunciar";
+  // o que foi publicado sai da fila; o que falhou fica para você tentar de novo
+  fila = fila.filter(p => {
+    const r = lista.find(x => x.produto === (p.titulo || "").toUpperCase());
+    return r && !(r.shopify?.ok || r.ml?.ok);
+  });
+  $("btAnunciar").disabled = false; $("btAdicionar").disabled = false;
+  desenharFila();
   historico();
 }
 
 const fecharModal = () => $("modal").classList.remove("ver");
 function novoAnuncio() {
-  ["titulo", "ean", "precoShopify", "precoML"].forEach(i => $(i).value = "");
-  $("blocoML").hidden = true; $("atributosML").innerHTML = ""; $("trocaCat").hidden = true;
-  atributosML = []; categoriaML = "";
+  limparFormulario();
+  fila = []; desenharFila();
   fecharModal(); $("titulo").focus();
 }
 
