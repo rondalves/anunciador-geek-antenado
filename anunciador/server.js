@@ -15,9 +15,9 @@ const env = process.env;
 const PORT = env.PORT || 8080;
 const BASE_URL = (env.BASE_URL || `http://localhost:${PORT}`).replace(/\/$/, "");
 
-const SHOP = env.SHOPIFY_SHOP || "geekantenado.myshopify.com";
+const SHOP = env.SHOPIFY_SHOP || "";
 const SHOP_API = env.SHOPIFY_API_VERSION || "2025-01";
-const PUBLICATION_ID = env.SHOPIFY_PUBLICATION_ID || "gid://shopify/Publication/171235442871";
+const PUBLICATION_ID = env.SHOPIFY_PUBLICATION_ID || "";
 const SHOP_KEY = env.SHOPIFY_API_KEY || "";
 const SHOP_SECRET = env.SHOPIFY_API_SECRET || "";
 const SHOP_SCOPES = env.SHOPIFY_SCOPES ||
@@ -51,9 +51,39 @@ const LOG_FILE = path.join(DATA, "publicados.json");
 const readJson = (f, fb) => { try { return JSON.parse(fs.readFileSync(f, "utf8")); } catch { return fb; } };
 const writeJson = (f, o) => fs.writeFileSync(f, JSON.stringify(o, null, 2));
 
+/* ---------- segredo para assinar URLs e o state do OAuth ----------
+   Fica em disco para sobreviver a restart: se mudasse, os links de foto que a
+   Shopify ainda não baixou parariam de funcionar no meio de uma publicação. */
+const SEGREDO_FILE = path.join(DATA, "url_secret.json");
+const SEGREDO = (() => {
+  const s = readJson(SEGREDO_FILE, null)?.segredo;
+  if (s) return s;
+  const novo = crypto.randomBytes(32).toString("hex");
+  writeJson(SEGREDO_FILE, { segredo: novo, criado_em: new Date().toISOString() });
+  return novo;
+})();
+const assinar = (dados) => crypto.createHmac("sha256", SEGREDO).update(String(dados)).digest("base64url");
+const assinaturaConfere = (dados, recebida) => {
+  const esperada = Buffer.from(assinar(dados));
+  const veio = Buffer.from(String(recebida || ""));
+  return esperada.length === veio.length && crypto.timingSafeEqual(esperada, veio);
+};
+
+// a Shopify baixa a foto pela URL, então /img/ tem que ser público — mas só aceita
+// link que este servidor gerou, e que ainda não expirou. Sem isso, qualquer um que
+// soubesse um ID do Drive baixaria o arquivo usando a credencial do dono.
+const VALIDADE_FOTO_MS = 24 * 60 * 60 * 1000; // a Shopify às vezes busca a imagem bem depois
+function urlFoto(id) {
+  const ate = Date.now() + VALIDADE_FOTO_MS;
+  return `${BASE_URL}/img/${id}?ate=${ate}&s=${assinar(`${id}.${ate}`)}`;
+}
+
 /* ---------- senha ---------- */
 app.use((req, res, next) => {
-  if (!env.APP_PASSWORD || req.path.startsWith("/auth/ml") || req.path.startsWith("/auth/shopify") || req.path.startsWith("/auth/google") || req.path.startsWith("/img/")) return next();
+  // aberto só o que PRECISA ser: o retorno do provedor de OAuth (que chega sem sessão)
+  // e o /img/, que a Shopify baixa — este último é protegido por assinatura, não por senha
+  const aberto = /^\/auth\/(ml|shopify|google)\/callback$/.test(req.path) || req.path.startsWith("/img/");
+  if (!env.APP_PASSWORD || aberto) return next();
   const h = req.headers.authorization || "";
   const [, p] = Buffer.from(h.split(" ")[1] || "", "base64").toString().split(":");
   if (p === env.APP_PASSWORD) return next();
@@ -76,7 +106,9 @@ app.get("/api/fotos", async (req, res) => {
       `&fields=files(id,name)&orderBy=name&pageSize=200&key=${DRIVE_KEY}`);
     const j = await r.json();
     if (j.error) throw new Error(j.error.message);
-    res.json({ ok: true, files: (j.files || []).map(f => ({ id: f.id, nome: f.name, url: `${BASE_URL}/img/${f.id}` })) });
+    // só os arquivos da pasta configurada saem daqui, e só eles ganham assinatura —
+    // é a assinatura que autoriza o download, então o proxy fica limitado a esta pasta
+    res.json({ ok: true, files: (j.files || []).map(f => ({ id: f.id, nome: f.name, url: urlFoto(f.id) })) });
   } catch (e) { res.status(400).json({ ok: false, erro: e.message }); }
 });
 
@@ -85,12 +117,14 @@ app.get("/auth/google", (req, res) => {
   const u = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${GOOGLE_CLIENT_ID}` +
     `&redirect_uri=${encodeURIComponent(`${BASE_URL}/auth/google/callback`)}` +
     `&response_type=code&access_type=offline&prompt=consent` +
+    `&state=${encodeURIComponent(novoState("google"))}` +
     `&scope=${encodeURIComponent("https://www.googleapis.com/auth/drive.readonly")}`;
   res.redirect(u);
 });
 
 app.get("/auth/google/callback", async (req, res) => {
   try {
+    if (!stateValido("google", req.query.state)) throw new Error("state invalido ou expirado — recomece em /auth/google");
     const r = await fetch("https://oauth2.googleapis.com/token", {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -145,6 +179,9 @@ const baixarDrive = async (id, tentativa = 1) => {
 };
 
 app.get("/img/:id", async (req, res) => {
+  const { ate, s } = req.query;
+  if (!assinaturaConfere(`${req.params.id}.${ate}`, s)) return res.status(403).send("link invalido");
+  if (!(Number(ate) > Date.now())) return res.status(403).send("link expirado");
   try {
     const { buf, tipo } = await baixarDrive(req.params.id);
     res.set({ "Content-Type": tipo, "Cache-Control": "public, max-age=86400" }).send(buf);
@@ -161,17 +198,17 @@ function shopifyToken() {
 
 app.get("/auth/shopify", (req, res) => {
   if (!SHOP_KEY) return res.status(400).send("SHOPIFY_API_KEY não configurado no .env");
-  const estado = crypto.randomBytes(12).toString("hex");
-  res.cookie?.("shopify_state", estado);
+  const estado = novoState("shopify");
   const u = `https://${SHOP}/admin/oauth/authorize?client_id=${SHOP_KEY}` +
     `&scope=${encodeURIComponent(SHOP_SCOPES)}` +
     `&redirect_uri=${encodeURIComponent(`${BASE_URL}/auth/shopify/callback`)}` +
-    `&state=${estado}`;
+    `&state=${encodeURIComponent(estado)}`;
   res.redirect(u);
 });
 
 app.get("/auth/shopify/callback", async (req, res) => {
   try {
+    if (!stateValido("shopify", req.query.state)) throw new Error("state invalido ou expirado — recomece em /auth/shopify");
     const r = await fetch(`https://${SHOP}/admin/oauth/access_token`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -185,6 +222,7 @@ app.get("/auth/shopify/callback", async (req, res) => {
 });
 
 async function gql(query, variables) {
+  if (!SHOP) throw new Error("SHOPIFY_SHOP não configurada no .env (ex.: sualoja.myshopify.com)");
   const r = await fetch(`https://${SHOP}/admin/api/${SHOP_API}/graphql.json`, {
     method: "POST",
     headers: { "Content-Type": "application/json", "X-Shopify-Access-Token": shopifyToken() },
@@ -210,11 +248,24 @@ const ue = (o) => {
 };
 
 /* ---------- Mercado Livre ---------- */
+// state assinado: sem ele, qualquer um chamava o callback com um code da propria conta
+// e sobrescrevia o token — o painel passaria a publicar na conta do invasor
+function novoState(qual) {
+  const ate = Date.now() + 10 * 60 * 1000;
+  return `${qual}.${ate}.${assinar(`${qual}.${ate}`)}`;
+}
+function stateValido(qual, recebido) {
+  const [q, ate, sig] = String(recebido || "").split(".");
+  return q === qual && Number(ate) > Date.now() && assinaturaConfere(`${q}.${ate}`, sig);
+}
+
 app.get("/auth/ml", (_, res) => res.redirect(
-  `https://auth.mercadolivre.com.br/authorization?response_type=code&client_id=${ML_CLIENT_ID}&redirect_uri=${encodeURIComponent(ML_REDIRECT_URI)}`));
+  `https://auth.mercadolivre.com.br/authorization?response_type=code&client_id=${ML_CLIENT_ID}` +
+  `&redirect_uri=${encodeURIComponent(ML_REDIRECT_URI)}&state=${encodeURIComponent(novoState("ml"))}`));
 
 app.get("/auth/ml/callback", async (req, res) => {
   try {
+    if (!stateValido("ml", req.query.state)) throw new Error("state invalido ou expirado — recomece em /auth/ml");
     const r = await fetch("https://api.mercadolibre.com/oauth/token", {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded", accept: "application/json" },
@@ -630,7 +681,8 @@ app.get("/api/ml/preview", async (req, res) => {
 });
 
 async function mlUploadFoto(url, token) {
-  const { buf, tipo } = await baixarDrive(url.split("/").pop());
+  // a URL da foto agora carrega assinatura e validade; o ID é só o último trecho do caminho
+  const { buf, tipo } = await baixarDrive(url.split("?")[0].split("/").pop());
   const fd = new FormData();
   fd.append("file", new Blob([buf], { type: tipo }), "foto.jpg");
   const r = await fetch("https://api.mercadolibre.com/pictures/items/upload", {
@@ -868,10 +920,15 @@ async function publicarUm(job, b, ctx) {
       // sem padrao aparente em lote — a unica forma confiavel e perguntar depois
       let publicado = false;
       try {
+        // descobre o canal "Loja virtual" quando não vier no .env — é fixo por loja
+        const canal = PUBLICATION_ID ||
+          (await gql(`{ publications(first:20){ nodes{ id name } } }`)).publications?.nodes
+            ?.find(n => /loja virtual|online store/i.test(n.name))?.id;
+        if (!canal) throw new Error("não achei o canal Loja Virtual — informe SHOPIFY_PUBLICATION_ID no .env");
         await gql(`mutation p($id:ID!,$input:[PublicationInput!]!){ publishablePublish(id:$id,input:$input){
-            userErrors{ field message } } }`, { id: pid, input: [{ publicationId: PUBLICATION_ID }] });
+            userErrors{ field message } } }`, { id: pid, input: [{ publicationId: canal }] });
         const chk = await gql(`query($id:ID!,$pub:ID!){ product(id:$id){ publishedOnPublication(publicationId:$pub) } }`,
-          { id: pid, pub: PUBLICATION_ID });
+          { id: pid, pub: canal });
         publicado = !!chk.product?.publishedOnPublication;
         if (!publicado) out.avisos.push("A Shopify aceitou a publicacao mas o produto nao consta no canal — publique na mao no admin");
       } catch (e) { out.avisos.push("Nao consegui confirmar a publicacao no canal: " + e.message.slice(0, 120)); }
@@ -1035,4 +1092,4 @@ app.get("/api/status", async (_, res) => {
 
 app.listen(PORT, () => console.log(`anunciador em ${BASE_URL}`));
 // expostos para scripts/teste-ml.mjs — nao muda o comportamento do app
-export { validarCategoria, detalhesCategoria, mlCategorias, preencherAtributosComIA, resolverAtributos, valorPorTexto, valorPadrao, gtinValido, comoEnviar, limparAtributo, esperaSugerida, trocarDeModelo, usaFamilyName, fichaDoTitulo, montarDescricao, produtoPorSku, anuncioPorSku, chamarIA, extrairJSON };
+export { validarCategoria, detalhesCategoria, mlCategorias, preencherAtributosComIA, resolverAtributos, valorPorTexto, valorPadrao, gtinValido, comoEnviar, limparAtributo, esperaSugerida, trocarDeModelo, usaFamilyName, urlFoto, assinar, fichaDoTitulo, montarDescricao, produtoPorSku, anuncioPorSku, chamarIA, extrairJSON };

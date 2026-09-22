@@ -141,5 +141,13 @@ ok("intro usa o titulo inteiro, nao o corte marca/modelo", desc.texto.includes(t
 const comIA = m.montarDescricao({ titulo: tAnbernic, usado: true, destaques: ["Bullet da IA"], intro: "Intro da IA" });
 ok("destaques da IA nao sao sobrescritos", comIA.texto.includes("Bullet da IA") && !comIA.texto.includes("Saída HDMI"));
 
+console.log("\n-- 11. URL de foto assinada --");
+const u = m.urlFoto("1AbCdEfGh");
+ok("url traz id, validade e assinatura", /\/img\/1AbCdEfGh\?ate=\d+&s=.+/.test(u), u);
+ok("validade e futura", Number(new URL(u, "http://x").searchParams.get("ate")) > Date.now());
+// o upload pro ML extrai o id da URL; com query string, split("/").pop() sozinho quebraria
+ok("id continua extraivel da url assinada", u.split("?")[0].split("/").pop() === "1AbCdEfGh");
+ok("duas chamadas geram assinaturas diferentes (validade muda)", m.urlFoto("x") !== u);
+
 console.log(falhas ? `\n${falhas} FALHARAM` : "\nTodas as adicoes conferidas");
 process.exit(falhas ? 1 : 0);
