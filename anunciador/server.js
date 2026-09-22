@@ -194,6 +194,16 @@ async function gql(query, variables) {
   if (j.errors) throw new Error(JSON.stringify(j.errors).slice(0, 300));
   return j.data;
 }
+// devolve o id do produto que já usa esse SKU, ou null. Base da publicação repetível.
+async function produtoPorSku(sku) {
+  if (!sku) return null;
+  try {
+    const d = await gql(`query($q:String!){ productVariants(first:1, query:$q){ nodes{ product{ id } } } }`,
+      { q: `sku:'${String(sku).replace(/'/g, "")}'` });
+    return d.productVariants?.nodes?.[0]?.product?.id || null;
+  } catch { return null; } // busca indisponível não pode impedir a publicação
+}
+
 const ue = (o) => {
   const l = o?.userErrors || o?.mediaUserErrors || [];
   return l.length ? l.map(e => `${e.field || ""} ${e.message}`.trim()).join(" | ") : null;
@@ -304,16 +314,28 @@ async function mlCategorias(token, texto) {
 
 // contas com a tag user_product_seller mandam family_name em vez de title.
 // É fixo por conta, então pergunta uma vez e guarda.
-let contaUsaFamilyName = null;
+let contaUsaFamilyName = null, contaMLId = "";
 async function usaFamilyName(token) {
   if (contaUsaFamilyName === null) {
     try {
       const me = await mlApi("/users/me", token);
       contaUsaFamilyName = (me.tags || []).includes("user_product_seller");
+      contaMLId = String(me.id || "");
       console.log(`[ML] conta ${contaUsaFamilyName ? "usa family_name" : "usa title"}`);
     } catch { contaUsaFamilyName = true; } // no escuro, mantém o comportamento que já rodava
   }
   return contaUsaFamilyName;
+}
+
+// anúncio ativo com o mesmo SKU: repetir a publicação não pode criar um segundo
+async function anuncioPorSku(token, sku) {
+  if (!sku) return null;
+  try {
+    await usaFamilyName(token); // popula contaMLId
+    if (!contaMLId) return null;
+    const r = await mlApi(`/users/${contaMLId}/items/search?status=active&seller_sku=${encodeURIComponent(sku)}`, token);
+    return (r.results || [])[0] || null;
+  } catch { return null; } // busca indisponível não pode impedir a publicação
 }
 
 // o ML só aceita anúncio em categoria FOLHA que permita publicar — categoria de galho é recusada
@@ -733,9 +755,14 @@ async function publicarUm(job, b, ctx) {
     try {
       etapa("Criando produto na Shopify");
       const locationId = env.SHOPIFY_LOCATION_ID || (await gql(`{ locations(first:1){ nodes{ id } } }`)).locations.nodes[0]?.id;
+      // repetir a publicação (por exemplo quando o ML recusa e você tenta de novo) criava
+      // um produto novo a cada tentativa. Procurar pelo SKU antes torna a operação repetível.
+      const jaExiste = await produtoPorSku(p.sku);
+      if (jaExiste) out.avisos.push(`Já havia um produto com o SKU ${p.sku} na Shopify — atualizei em vez de criar outro`);
       const d = await gql(`mutation s($input: ProductSetInput!){ productSet(synchronous:true, input:$input){
           product{ id } userErrors{ field message } } }`, {
         input: {
+          ...(jaExiste ? { id: jaExiste } : {}),
           title: p.titulo, descriptionHtml: p.descricaoHtml, productType: p.categoria, vendor: p.marca,
           tags: p.tags, status: p.status,
           productOptions: [{ name: "Title", values: [{ name: "Default Title" }] }],
@@ -752,7 +779,11 @@ async function publicarUm(job, b, ctx) {
       const pid = d.productSet.product.id;
 
       etapa(`Enviando ${fotos.length} foto(s) para a Shopify`);
-      if (fotos.length) {
+      // produto reaproveitado já tem as fotos; reenviar duplicaria a galeria
+      const temFotos = jaExiste && (await gql(`query($id:ID!){ product(id:$id){ media(first:1){ nodes{ id } } } }`,
+        { id: pid }).catch(() => null))?.product?.media?.nodes?.length;
+      if (temFotos) out.avisos.push("O produto já tinha fotos na Shopify — não reenviei");
+      else if (fotos.length) {
         const m = await gql(`mutation m($id:ID!,$media:[CreateMediaInput!]!){ productCreateMedia(productId:$id, media:$media){
             mediaUserErrors{ field message } } }`,
           { id: pid, media: fotos.map(u => ({ originalSource: u, mediaContentType: "IMAGE" })) });
@@ -801,6 +832,12 @@ async function publicarUm(job, b, ctx) {
       if (!fotos.length) throw new Error("Sem fotos — o Mercado Livre exige ao menos uma imagem para Clássico");
       etapa("Autenticando no Mercado Livre");
       const token = await mlToken();
+
+      // o SELLER_SKU é o que amarra as duas plataformas; se já existe anúncio ativo,
+      // republicar criaria um concorrente do próprio produto
+      const jaAnunciado = await anuncioPorSku(token, p.sku);
+      if (jaAnunciado) throw new Error(
+        `JA_ANUNCIADO:${jaAnunciado}`);
 
       etapa("Definindo categoria");
       const cat = await validarCategoria(token, b.categoriaML, [p.tituloML, p.marca, p.modelo].filter(Boolean).join(" "));
@@ -888,8 +925,15 @@ async function publicarUm(job, b, ctx) {
       etapa("Mercado Livre pronto");
       out.ml = { ok: true, id: item.id, url: item.permalink, status: item.status };
     } catch (e) {
-      out.ml = { ok: false, erro: e.message };
-      emitir(job, { tipo: "falha", alvo: "Mercado Livre", texto: e.message });
+      // anúncio que já existia não é falha: é a publicação sendo repetível
+      const id = (e.message.match(/^JA_ANUNCIADO:(.+)$/) || [])[1];
+      if (id) {
+        out.ml = { ok: true, id, url: `https://www.mercadolivre.com.br/anuncio/${id}`, status: "já existia" };
+        out.avisos.push(`Já havia anúncio ativo com o SKU ${p.sku} — não criei outro`);
+      } else {
+        out.ml = { ok: false, erro: e.message };
+        emitir(job, { tipo: "falha", alvo: "Mercado Livre", texto: e.message });
+      }
     }
   }
 
@@ -930,4 +974,4 @@ app.get("/api/status", async (_, res) => {
 
 app.listen(PORT, () => console.log(`anunciador em ${BASE_URL}`));
 // expostos para scripts/teste-ml.mjs — nao muda o comportamento do app
-export { validarCategoria, detalhesCategoria, mlCategorias, preencherAtributosComIA, resolverAtributos, valorPorTexto, valorPadrao, gtinValido, comoEnviar, limparAtributo, esperaSugerida, trocarDeModelo, usaFamilyName, chamarIA, extrairJSON };
+export { validarCategoria, detalhesCategoria, mlCategorias, preencherAtributosComIA, resolverAtributos, valorPorTexto, valorPadrao, gtinValido, comoEnviar, limparAtributo, esperaSugerida, trocarDeModelo, usaFamilyName, produtoPorSku, anuncioPorSku, chamarIA, extrairJSON };

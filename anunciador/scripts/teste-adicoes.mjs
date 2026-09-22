@@ -105,5 +105,17 @@ const r6 = await m.resolverAtributos(T, "MLB11172", prod, [], { semIA: true });
 ok("semIA nao impede a resolucao", !!r6.resolvidos.find(a => a.id === "VOLTAGE"));
 ok("semIA nao reporta erro de IA", r6.erroIA === "");
 
+console.log("\n-- 9. publicacao repetivel (idempotencia por SKU) --");
+// sem credencial de Shopify/ML as buscas falham: o contrato e devolver null e nunca
+// lancar, senao uma busca fora do ar impediria a publicacao inteira
+ok("produtoPorSku sem credencial devolve null", (await m.produtoPorSku("QUALQUER-SKU")) === null);
+ok("produtoPorSku com sku vazio devolve null", (await m.produtoPorSku("")) === null);
+ok("anuncioPorSku sem credencial devolve null", (await m.anuncioPorSku(T, "QUALQUER-SKU")) === null);
+ok("anuncioPorSku com sku vazio devolve null", (await m.anuncioPorSku(T, "")) === null);
+ok("Shopify reusa o id quando o SKU ja existe", src.includes("jaExiste ? { id: jaExiste }"));
+ok("nao reenvia fotos em produto reaproveitado", src.includes("já tinha fotos na Shopify"));
+ok("ML sinaliza anuncio existente em vez de criar outro", src.includes("JA_ANUNCIADO"));
+ok("anuncio que ja existia conta como sucesso", src.includes('status: "já existia"'));
+
 console.log(falhas ? `\n${falhas} FALHARAM` : "\nTodas as adicoes conferidas");
 process.exit(falhas ? 1 : 0);
