@@ -460,6 +460,13 @@ function gtinValido(codigo) {
 // O ML não aceita value_id em todo tipo de atributo: number_unit ("8 GB") e boolean
 // ("Sim"/"Não") exigem value_name mesmo tendo lista de valores. Mandar value_id
 // nesses casos é recusa na criação do item.
+// a etiqueta traz "01657-26-13366", mas o ML recusa o campo com traço
+// (error.item.attribute.anatel_homologation_number.value_name) — só dígitos
+const SO_DIGITOS = /ANATEL_HOMOLOGATION_NUMBER$/;
+const limparAtributo = (a) => (a.value_name && SO_DIGITOS.test(a.id))
+  ? { ...a, value_name: String(a.value_name).replace(/\D/g, "") }
+  : a;
+
 const comoEnviar = (attr, valor) =>
   (attr.tipo === "number_unit" || attr.tipo === "boolean")
     ? { id: attr.id, value_name: valor.nome }
@@ -569,17 +576,6 @@ Responda SÓ com JSON entre ===INICIO_JSON=== e ===FIM_JSON===, no formato {"ID_
   }
 }
 
-// categoriza sozinho a partir do título e já devolve a ficha da categoria
-app.get("/api/ml/auto", async (req, res) => {
-  try {
-    const token = await mlToken();
-    const lista = await mlCategorias(token, req.query.nome);
-    if (!lista.length) throw new Error("não consegui identificar a categoria — descreva melhor o produto no título");
-    const escolhida = lista[0];
-    res.json({ ok: true, escolhida, alternativas: lista, ...(await detalhesCategoria(token, escolhida.id)) });
-  } catch (e) { res.status(400).json({ ok: false, erro: e.message }); }
-});
-
 // mostra, ANTES de publicar, em que categoria o anúncio vai cair e o que o ML exige,
 // já com o que o painel consegue preencher sozinho — o resto o usuário escolhe na tela
 app.get("/api/ml/preview", async (req, res) => {
@@ -611,20 +607,6 @@ app.get("/api/ml/preview", async (req, res) => {
   } catch (e) { res.status(400).json({ ok: false, erro: e.message }); }
 });
 
-app.get("/api/ml/categorias", async (req, res) => {
-  try {
-    const token = await mlToken();
-    res.json({ ok: true, sugestoes: await mlCategorias(token, req.query.nome) });
-  } catch (e) { res.status(400).json({ ok: false, erro: e.message }); }
-});
-
-app.get("/api/ml/atributos", async (req, res) => {
-  try {
-    const token = await mlToken();
-    res.json({ ok: true, ...(await detalhesCategoria(token, req.query.categoria)) });
-  } catch (e) { res.status(400).json({ ok: false, erro: e.message }); }
-});
-
 async function mlUploadFoto(url, token) {
   const { buf, tipo } = await baixarDrive(url.split("/").pop());
   const fd = new FormData();
@@ -636,37 +618,6 @@ async function mlUploadFoto(url, token) {
   if (!j.id) throw new Error("upload de foto recusado pelo ML");
   return j.id;
 }
-
-/* ---------- ler EAN da foto da caixa ---------- */
-app.post("/api/ler-ean", async (req, res) => {
-  try {
-    if (!ANTHROPIC_KEY) throw new Error("Sem ANTHROPIC_API_KEY — digite o EAN no campo");
-    const ids = (req.body.fotos || []).slice(0, 4).map(u => u.split("/").pop());
-    if (!ids.length) throw new Error("Selecione pelo menos a foto da caixa");
-    const conteudo = [];
-    for (const id of ids) {
-      const { buf, tipo } = await baixarDrive(id);
-      conteudo.push({
-        type: "image",
-        source: { type: "base64", media_type: tipo.includes("png") ? "image/png" : "image/jpeg", data: buf.toString("base64") }
-      });
-    }
-    conteudo.push({
-      type: "text",
-      text: "Nestas fotos da caixa, ache o código de barras EAN/GTIN (12 a 14 dígitos impressos abaixo das barras). Responda APENAS os dígitos. Se não der para ler com certeza, responda NAO_ENCONTRADO."
-    });
-    const r = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "x-api-key": ANTHROPIC_KEY, "anthropic-version": "2023-06-01" },
-      body: JSON.stringify({ model: MODELO, max_tokens: 60, messages: [{ role: "user", content: conteudo }] })
-    });
-    const j = await r.json();
-    const txt = (j.content || []).map(c => c.text || "").join("");
-    const ean = (txt.match(/\d{12,14}/) || [])[0];
-    if (!ean) throw new Error("Não consegui ler o código na foto — digite no campo");
-    res.json({ ok: true, ean });
-  } catch (e) { res.status(400).json({ ok: false, erro: e.message }); }
-});
 
 /* ---------- descrição automática ---------- */
 app.post("/api/gerar-texto", async (req, res) => {
@@ -893,7 +844,7 @@ async function publicarUm(job, b, ctx) {
           : [{ id: "EMPTY_GTIN_REASON", value_name: "O produto não tem código cadastrado" }]),
         ...atributosIA,
         ...(b.atributosML || []).filter(a => a.value_id || a.value_name)
-      ];
+      ].map(limparAtributo);
       if (!p.ean) out.avisos.push("Sem EAN — enviei o motivo de ausência, mas marca consolidada costuma exigir o código real");
       const corpo = {
         category_id: categoria, price: p.precoML, currency_id: "BRL",
@@ -979,4 +930,4 @@ app.get("/api/status", async (_, res) => {
 
 app.listen(PORT, () => console.log(`anunciador em ${BASE_URL}`));
 // expostos para scripts/teste-ml.mjs — nao muda o comportamento do app
-export { validarCategoria, detalhesCategoria, preencherAtributosComIA, resolverAtributos, valorPorTexto, valorPadrao, gtinValido, comoEnviar, chamarIA, extrairJSON };
+export { validarCategoria, detalhesCategoria, mlCategorias, preencherAtributosComIA, resolverAtributos, valorPorTexto, valorPadrao, gtinValido, comoEnviar, limparAtributo, esperaSugerida, trocarDeModelo, usaFamilyName, chamarIA, extrairJSON };
