@@ -676,7 +676,68 @@ app.get("/api/progresso/:id", (req, res) => {
   req.on("close", () => { j.clientes = j.clientes.filter(c => c !== res); });
 });
 
+// Reserva para quando a IA não responde: o título do canal já é uma ficha técnica
+// ("TELA IPS 3.5 DUPLO ANALOGICO WI-FI BLUETOOTH HDMI 64GB"). Aqui NÃO se inventa
+// nada — só é reescrito o que já está escrito no título.
+const TERMOS = [
+  [/\bwi[\s-]?fi\b/, "Conexão Wi-Fi"],
+  [/\bbluetooth\b/, "Bluetooth"],
+  [/\bhdmi\b/, "Saída HDMI"],
+  [/\busb[\s-]?c\b|\btipo[\s-]?c\b/, "Porta USB-C"],
+  [/\bnfc\b/, "NFC"],
+  [/\b5g\b/, "Rede 5G"],
+  [/\b4k\b/, "Vídeo em 4K"],
+  [/\b8k\b/, "Vídeo em 8K"],
+  [/\bamoled\b/, "Tela AMOLED"],
+  [/\boled\b/, "Tela OLED"],
+  [/\bips\b/, "Tela IPS"],
+  [/\bretro\b/, "Compatível com jogos retrô"],
+  [/\bduplo\s+analogico\b/, "Controles analógicos duplos"],
+  [/\bdual\s?sim\b/, "Dual SIM"],
+  [/\bgps\b/, "GPS"],
+  [/\bip6[78]\b|\bprova\s+d\W?agua\b|\bwaterproof\b/, "Resistente à água"],
+  [/\bsem\s+fio\b|\bwireless\b/, "Sem fio"],
+  [/\bcarregamento\s+rapido\b|\bfast\s+charg/, "Carregamento rápido"],
+  [/\bcancelamento\s+de\s+ruido\b|\banc\b/, "Cancelamento de ruído"],
+  [/\bamplificad/, "Som amplificado"],
+  [/\bmicrofone\b|\bmic\b/, "Microfone integrado"],
+  [/\bcamera\b/, "Câmera"],
+  [/\btouch\b|\btouchscreen\b/, "Tela sensível ao toque"],
+];
+
+function fichaDoTitulo(titulo) {
+  const t = normTxt(titulo);
+  const bullets = [];
+  for (const [re, texto] of TERMOS) if (re.test(t) && !bullets.includes(texto)) bullets.push(texto);
+  // capacidade de armazenamento / memória
+  const cap = t.match(/(\d+)\s*(gb|tb|mb)\b/g);
+  if (cap) bullets.push(`${cap[cap.length - 1].toUpperCase().replace(/\s+/g, "")} de armazenamento`);
+  // polegadas: só quando o título fala de tela ou marca a unidade, senão "HDMI 2.1" viraria tamanho
+  const pol = /\bpolegadas?\b|["']\s|\btela\b/.test(t)
+    ? t.match(/\b(\d{1,2}(?:[.,]\d{1,2})?)\s*(?:polegadas?|["']|$)/) || t.match(/\btela\s+\w*\s*(\d{1,2}[.,]\d{1,2})/)
+    : null;
+  if (pol) bullets.push(`Tela de ${pol[1].replace(",", ".")} polegadas`);
+  // bateria
+  const mah = t.match(/(\d{3,5})\s*mah\b/);
+  if (mah) bullets.push(`Bateria de ${mah[1]} mAh`);
+  return bullets;
+}
+
 function montarDescricao(p) {
+  // sem IA disponível, monta a descrição a partir do título em vez de publicar quase vazio
+  if (!(p.destaques || []).filter(Boolean).length) {
+    const ficha = fichaDoTitulo(p.titulo || "");
+    if (ficha.length) {
+      p = {
+        ...p,
+        destaques: ficha,
+        // o painel separa marca/modelo por posição no título, o que corta errado —
+        // para a intro, o título inteiro é mais fiel
+        intro: p.intro || String(p.titulo || "").trim().replace(/\.*$/, "") + ".",
+        fechamento: p.fechamento || "Produto testado e usado na produção de vídeos do canal Geek Antenado."
+      };
+    }
+  }
   const bl = (p.destaques || []).filter(Boolean);
   const html = [
     p.usado ? "<p>Produto usado para criação de vídeos no canal Geek Antenado.<br>Não possui marcas de uso.<br>Todos os acessórios na caixa.</p>" : "",
@@ -974,4 +1035,4 @@ app.get("/api/status", async (_, res) => {
 
 app.listen(PORT, () => console.log(`anunciador em ${BASE_URL}`));
 // expostos para scripts/teste-ml.mjs — nao muda o comportamento do app
-export { validarCategoria, detalhesCategoria, mlCategorias, preencherAtributosComIA, resolverAtributos, valorPorTexto, valorPadrao, gtinValido, comoEnviar, limparAtributo, esperaSugerida, trocarDeModelo, usaFamilyName, produtoPorSku, anuncioPorSku, chamarIA, extrairJSON };
+export { validarCategoria, detalhesCategoria, mlCategorias, preencherAtributosComIA, resolverAtributos, valorPorTexto, valorPadrao, gtinValido, comoEnviar, limparAtributo, esperaSugerida, trocarDeModelo, usaFamilyName, fichaDoTitulo, montarDescricao, produtoPorSku, anuncioPorSku, chamarIA, extrairJSON };

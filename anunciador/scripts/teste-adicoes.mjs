@@ -117,5 +117,29 @@ ok("nao reenvia fotos em produto reaproveitado", src.includes("já tinha fotos n
 ok("ML sinaliza anuncio existente em vez de criar outro", src.includes("JA_ANUNCIADO"));
 ok("anuncio que ja existia conta como sucesso", src.includes('status: "já existia"'));
 
+console.log("\n-- 10. descricao sem IA, a partir do titulo --");
+const tAnbernic = "VIDEO GAME PORTATIL RETRÔ ANBERNIC RG35XX H TELA IPS 3.5 DUPLO ANALOGICO WI-FI BLUETOOTH HDMI 64GB";
+const fAnbernic = m.fichaDoTitulo(tAnbernic);
+ok("extrai 8 especificacoes do titulo real", fAnbernic.length === 8, fAnbernic.length + ": " + fAnbernic.join(" | "));
+ok("pega Wi-Fi com hifen", fAnbernic.includes("Conexão Wi-Fi"));
+ok("pega armazenamento", fAnbernic.includes("64GB de armazenamento"));
+ok("pega polegadas da tela", fAnbernic.includes("Tela de 3.5 polegadas"));
+ok("nao confunde 'HDMI 2.1' com tamanho de tela",
+  !m.fichaDoTitulo("Cabo HDMI 2.1 de 2 metros").some(x => x.includes("polegadas")),
+  m.fichaDoTitulo("Cabo HDMI 2.1 de 2 metros").join(" | "));
+ok("mantem as duas casas decimais (1.43)",
+  m.fichaDoTitulo("Smartwatch Tela AMOLED 1.43 GPS").includes("Tela de 1.43 polegadas"));
+ok("bateria em mAh", m.fichaDoTitulo("Celular Bateria 5110mAh").includes("Bateria de 5110 mAh"));
+ok("titulo sem especificacao nao inventa nada", m.fichaDoTitulo("Produto Generico").length === 0);
+
+const desc = m.montarDescricao({ titulo: tAnbernic, usado: true, destaques: [] });
+ok("descricao final tem lista de destaques", /<ul>/.test(desc.html));
+ok("texto do ML tem as especificacoes", desc.texto.includes("Saída HDMI"));
+ok("mantem a frase padrao do canal", desc.texto.includes("Geek Antenado"));
+ok("intro usa o titulo inteiro, nao o corte marca/modelo", desc.texto.includes(tAnbernic));
+// se a IA respondeu, o que ela escreveu tem que prevalecer
+const comIA = m.montarDescricao({ titulo: tAnbernic, usado: true, destaques: ["Bullet da IA"], intro: "Intro da IA" });
+ok("destaques da IA nao sao sobrescritos", comIA.texto.includes("Bullet da IA") && !comIA.texto.includes("Saída HDMI"));
+
 console.log(falhas ? `\n${falhas} FALHARAM` : "\nTodas as adicoes conferidas");
 process.exit(falhas ? 1 : 0);
