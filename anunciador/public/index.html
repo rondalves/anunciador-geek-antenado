@@ -58,7 +58,8 @@ input:focus,select:focus{outline:none;border-color:var(--ciano);box-shadow:0 0 0
 .campoML label{margin-top:12px}
 .campoML:first-child label{margin-top:0}
 .auto{color:var(--verde);font-size:11px;font-weight:600;margin-left:6px}
-.duo{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.duo{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:16px;align-items:end}
+.duo label{margin-top:0}
 .precoLinha{position:relative}
 .precoLinha span{position:absolute;left:14px;top:50%;transform:translateY(-50%);color:var(--suave);
   font-size:13px;pointer-events:none;font-weight:600}
@@ -103,11 +104,19 @@ button{font:inherit;font-weight:700;border-radius:12px;border:none;cursor:pointe
   <input id="pasta" placeholder="link da pasta">
   <div class="dica">Busca as fotos pelo nome do produto — arquivos como <b>Nome do Produto (1).jpg</b></div>
 
-  <label for="ean">EAN da caixa <span style="color:var(--suave);font-weight:400">(quando tiver)</span></label>
-  <input id="ean" inputmode="numeric" placeholder="opcional">
+  <div class="duo">
+    <div>
+      <label for="ean">EAN da caixa <span style="color:var(--suave);font-weight:400">(quando tiver)</span></label>
+      <input id="ean" inputmode="numeric" placeholder="opcional">
+    </div>
+    <div>
+      <label for="estoque">Quantidade</label>
+      <input id="estoque" type="number" min="1" step="1" value="1">
+    </div>
+  </div>
 
   <label>Preço</label>
-  <div class="duo">
+  <div class="duo" style="margin-top:0">
     <div class="precoLinha"><span>Shopify</span><input id="precoShopify" type="number" step="0.01" placeholder="0,00"></div>
     <div class="precoLinha"><span>ML</span><input id="precoML" type="number" step="0.01" placeholder="0,00"></div>
   </div>
@@ -242,7 +251,8 @@ function produtoDoFormulario() {
   const partes = titulo.split(" ");
   return {
     titulo, tituloML: titulo.slice(0, 60), marca: partes[0] || "", modelo: partes.slice(1).join(" ") || titulo,
-    categoria: "", categoriaML, ean: $("ean").value, estoque: 1,
+    categoria: "", categoriaML, ean: $("ean").value,
+    estoque: Math.max(1, parseInt($("estoque").value, 10) || 1),
     precoShopify: precoShopify || undefined, precoML: precoML || undefined,
     usado: $("usado").checked, intro: "", fechamento: "", destaques: [],
     tags: [], fotos: [], atributosML: coletarAtributosML(),
@@ -253,6 +263,7 @@ function produtoDoFormulario() {
 
 function limparFormulario() {
   ["titulo", "ean", "precoShopify", "precoML"].forEach(i => $(i).value = "");
+  $("estoque").value = "1";
   $("blocoML").hidden = true; $("atributosML").innerHTML = ""; $("trocaCat").hidden = true;
   atributosML = []; categoriaML = "";
 }
@@ -266,7 +277,7 @@ function desenharFila() {
   $("fila").innerHTML = `<div class="contaFila">${fila.length} produto(s) na fila${$("titulo").value.trim() ? " — o do formulário entra junto" : ""}</div>` +
     fila.map((p, i) => `<div class="itemFila">
       <span class="nome">${p.titulo}</span>
-      <span class="valores">${[p.precoShopify && "Shopify " + brl(p.precoShopify), p.precoML && "ML " + brl(p.precoML)].filter(Boolean).join(" · ")}</span>
+      <span class="valores">${[p.estoque > 1 && `${p.estoque}un`, p.precoShopify && "Shopify " + brl(p.precoShopify), p.precoML && "ML " + brl(p.precoML)].filter(Boolean).join(" · ")}</span>
       <button title="tirar da fila" onclick="tirarDaFila(${i})">&times;</button>
     </div>`).join("");
 }
