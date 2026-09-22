@@ -256,13 +256,23 @@ async function mlToken() {
   return renovandoML;
 }
 
-async function mlApi(url, token, opts = {}) {
+// instabilidade observada: o ML devolve "DNS resolution failure" (503, corpo texto puro)
+// de vez em quando. E transitorio e some na segunda tentativa.
+const MLTRANSITORIO = /dns resolution|timeout|temporarily unavailable|bad gateway|service unavailable/i;
+
+async function mlApi(url, token, opts = {}, tentativa = 1) {
   const r = await fetch(url.startsWith("http") ? url : `https://api.mercadolibre.com${url}`, {
     ...opts, headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json", ...(opts.headers || {}) }
   });
   const txt = await r.text();
   let j; try { j = JSON.parse(txt); } catch { j = { raw: txt }; }
   if (!r.ok) {
+    const transitorio = r.status === 502 || r.status === 503 || r.status === 504 || MLTRANSITORIO.test(txt);
+    if (transitorio && tentativa < 4) {
+      console.warn(`[ML] ${r.status} transitorio em ${url} — tentativa ${tentativa + 1} em 3s`);
+      await new Promise(res => setTimeout(res, 3000));
+      return mlApi(url, token, opts, tentativa + 1);
+    }
     const causa = (j.cause || []).map(c => c.message || c.code).join("; ");
     throw new Error([j.message, causa].filter(Boolean).join(" — ") || txt.slice(0, 300));
   }
@@ -422,6 +432,25 @@ function extrairJSON(texto) {
 
 const normTxt = (s) => String(s || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
 
+// EAN-13 e UPC-A usam o mesmo cálculo: pesos 3 e 1 da direita pra esquerda.
+// Conferir antes de enviar evita gastar uma chamada pra descobrir erro de digitação
+// (o ML devolve "invalid_format", que quase sempre é dígito verificador errado).
+function gtinValido(codigo) {
+  const d = String(codigo || "").replace(/\D/g, "");
+  if (![8, 12, 13, 14].includes(d.length)) return false;
+  const corpo = d.slice(0, -1).split("").map(Number).reverse();
+  const soma = corpo.reduce((s, n, i) => s + n * (i % 2 === 0 ? 3 : 1), 0);
+  return (10 - (soma % 10)) % 10 === Number(d.slice(-1));
+}
+
+// O ML não aceita value_id em todo tipo de atributo: number_unit ("8 GB") e boolean
+// ("Sim"/"Não") exigem value_name mesmo tendo lista de valores. Mandar value_id
+// nesses casos é recusa na criação do item.
+const comoEnviar = (attr, valor) =>
+  (attr.tipo === "number_unit" || attr.tipo === "boolean")
+    ? { id: attr.id, value_name: valor.nome }
+    : { id: attr.id, value_id: valor.id, value_name: valor.nome };
+
 // como as pessoas escrevem no título vs. como o ML nomeia o valor
 // [regex no título, regex no nome do valor do ML]
 const SINONIMOS = {
@@ -460,7 +489,7 @@ const valorPadrao = (attr) => {
 // Resolve os atributos obrigatórios da categoria em cascata, da fonte mais confiável
 // para a menos: formulário > texto do produto > IA > padrão conhecido.
 // A IA é um degrau opcional — se estiver fora do ar, os outros ainda entregam.
-async function resolverAtributos(token, categoria, produto, jaTem = []) {
+async function resolverAtributos(token, categoria, produto, jaTem = [], opcoes = {}) {
   const { atributos } = await detalhesCategoria(token, categoria);
   const preenchidos = new Set(jaTem.filter(a => a.value_id || a.value_name).map(a => a.id));
   const obrigatorios = atributos.filter(a => a.obrigatorio && !preenchidos.has(a.id));
@@ -471,12 +500,13 @@ async function resolverAtributos(token, categoria, produto, jaTem = []) {
   const restantes = [];
   for (const a of obrigatorios) {
     const v = a.valores.length ? valorPorTexto(a, texto) : null;
-    if (v) { resolvidos.push({ id: a.id, value_id: v.id, value_name: v.nome }); origem.push(`${a.id}=título`); }
+    if (v) { resolvidos.push(comoEnviar(a, v)); origem.push(`${a.id}=título`); }
     else restantes.push(a);
   }
 
   let erroIA = "";
-  if (restantes.length && (GEMINI_KEY || ANTHROPIC_KEY)) {
+  // a pré-visualização da tela roda sem IA: precisa responder rápido e não gastar cota
+  if (restantes.length && !opcoes.semIA && (GEMINI_KEY || ANTHROPIC_KEY)) {
     try {
       for (const at of await preencherAtributosComIA(produto.tituloML, produto.marca, produto.modelo, restantes)) {
         resolvidos.push(at); origem.push(`${at.id}=IA`);
@@ -487,7 +517,7 @@ async function resolverAtributos(token, categoria, produto, jaTem = []) {
   for (const a of restantes) {
     if (resolvidos.some(r => r.id === a.id)) continue;
     const v = valorPadrao(a);
-    if (v) { resolvidos.push({ id: a.id, value_id: v.id, value_name: v.nome }); origem.push(`${a.id}=padrão`); }
+    if (v) { resolvidos.push(comoEnviar(a, v)); origem.push(`${a.id}=padrão`); }
     else faltam.push(a);
   }
   return { resolvidos, origem, faltam, erroIA };
@@ -514,7 +544,7 @@ Responda SÓ com JSON entre ===INICIO_JSON=== e ===FIM_JSON===, no formato {"ID_
       const bate = a.valores.find(x => x.id === v)
         || a.valores.find(x => norm(x.nome) === norm(v))
         || a.valores.find(x => norm(x.nome).includes(norm(v)) || norm(v).includes(norm(x.nome)));
-      if (bate) return { id: a.id, value_id: bate.id, value_name: bate.nome };
+      if (bate) return comoEnviar(a, bate);
       // se a categoria tem lista fechada e nada bateu, mandar texto livre é recusa certa
       return a.valores.length ? null : { id: a.id, value_name: String(v) };
     }).filter(Boolean);
@@ -533,6 +563,31 @@ app.get("/api/ml/auto", async (req, res) => {
     if (!lista.length) throw new Error("não consegui identificar a categoria — descreva melhor o produto no título");
     const escolhida = lista[0];
     res.json({ ok: true, escolhida, alternativas: lista, ...(await detalhesCategoria(token, escolhida.id)) });
+  } catch (e) { res.status(400).json({ ok: false, erro: e.message }); }
+});
+
+// mostra, ANTES de publicar, em que categoria o anúncio vai cair e o que o ML exige,
+// já com o que o painel consegue preencher sozinho — o resto o usuário escolhe na tela
+app.get("/api/ml/preview", async (req, res) => {
+  try {
+    const nome = (req.query.nome || "").trim();
+    if (!nome) throw new Error("Informe o nome do produto");
+    const token = await mlToken();
+    const cat = await validarCategoria(token, req.query.categoria || "", nome);
+    if (!cat) throw new Error("não consegui identificar a categoria — descreva melhor o produto no título");
+    const { atributos } = await detalhesCategoria(token, cat.id);
+    const produto = { titulo: nome, tituloML: nome, descricaoTexto: "" };
+    const { resolvidos, origem } = await resolverAtributos(token, cat.id, produto, [], { semIA: true });
+    const escolhido = new Map(resolvidos.map(a => [a.id, a]));
+    res.json({
+      ok: true, categoria: cat,
+      atributos: atributos.filter(a => a.obrigatorio).map(a => ({
+        id: a.id, nome: a.nome, tipo: a.tipo,
+        valores: a.valores,
+        sugerido: escolhido.get(a.id)?.value_id || escolhido.get(a.id)?.value_name || "",
+        origem: (origem.find(o => o.startsWith(a.id + "=")) || "").split("=")[1] || ""
+      }))
+    });
   } catch (e) { res.status(400).json({ ok: false, erro: e.message }); }
 });
 
@@ -746,12 +801,17 @@ async function publicarUm(job, b, ctx) {
       } catch (e) { out.avisos.push("Não consegui confirmar o rastreamento de estoque: " + e.message.slice(0, 120)); }
 
       etapa("Publicando na Loja Virtual");
-      let publicado = true;
+      // publishablePublish "funciona" sem erro e mesmo assim o produto nao aparece no canal,
+      // sem padrao aparente em lote — a unica forma confiavel e perguntar depois
+      let publicado = false;
       try {
-        const pub = await gql(`mutation p($id:ID!,$input:[PublicationInput!]!){ publishablePublish(id:$id,input:$input){
+        await gql(`mutation p($id:ID!,$input:[PublicationInput!]!){ publishablePublish(id:$id,input:$input){
             userErrors{ field message } } }`, { id: pid, input: [{ publicationId: PUBLICATION_ID }] });
-        if (ue(pub.publishablePublish)) publicado = false;
-      } catch { publicado = false; }
+        const chk = await gql(`query($id:ID!,$pub:ID!){ product(id:$id){ publishedOnPublication(publicationId:$pub) } }`,
+          { id: pid, pub: PUBLICATION_ID });
+        publicado = !!chk.product?.publishedOnPublication;
+        if (!publicado) out.avisos.push("A Shopify aceitou a publicacao mas o produto nao consta no canal — publique na mao no admin");
+      } catch (e) { out.avisos.push("Nao consegui confirmar a publicacao no canal: " + e.message.slice(0, 120)); }
 
       etapa("Shopify pronto");
       out.shopify = {
@@ -790,21 +850,31 @@ async function publicarUm(job, b, ctx) {
           ? `${a.nome} (escolha uma opção e escreva no título: ${a.valores.slice(0, 6).map(v => v.nome).join(", ")})`
           : `${a.nome} (texto livre — escreva no título)`).join("; "));
 
+      const fotosML = fotos.slice(0, 12); // o ML aceita no máximo 12 por anúncio
+      if (fotos.length > 12) out.avisos.push(`O ML aceita 12 fotos; enviei as 12 primeiras de ${fotos.length}`);
       const pictures = [];
-      for (const [i, url] of fotos.entries()) {
-        etapa(`Enviando foto ${i + 1} de ${fotos.length} para o Mercado Livre`);
+      for (const [i, url] of fotosML.entries()) {
+        etapa(`Enviando foto ${i + 1} de ${fotosML.length} para o Mercado Livre`);
         try { pictures.push({ id: await mlUploadFoto(url, token) }); }
         catch (e) { out.avisos.push(`Foto ${i + 1} do ML: ${e.message}`); }
       }
 
       etapa("Criando anúncio no Mercado Livre");
+      // GTIN na prática é exigido em qualquer categoria, mesmo sem aparecer em tags.required.
+      // Marca consolidada no catálogo do ML sempre cobra o código real; marca pequena às
+      // vezes aceita o motivo de ausência. Nunca inventar o número.
+      if (p.ean && !gtinValido(p.ean)) throw new Error(
+        `EAN ${p.ean} tem dígito verificador inválido — confira a digitação (o ML recusaria com "invalid_format")`);
       const attributes = [
         ...(p.marca ? [{ id: "BRAND", value_name: p.marca }] : []),
         ...(p.modelo ? [{ id: "MODEL", value_name: p.modelo }] : []),
-        ...(p.ean ? [{ id: "GTIN", value_name: p.ean }] : []),
+        ...(p.ean
+          ? [{ id: "GTIN", value_name: p.ean }]
+          : [{ id: "EMPTY_GTIN_REASON", value_name: "O produto não tem código cadastrado" }]),
         ...atributosIA,
         ...(b.atributosML || []).filter(a => a.value_id || a.value_name)
       ];
+      if (!p.ean) out.avisos.push("Sem EAN — enviei o motivo de ausência, mas marca consolidada costuma exigir o código real");
       const corpo = {
         category_id: categoria, price: p.precoML, currency_id: "BRL",
         available_quantity: p.estoque, buying_mode: "buy_it_now",
@@ -826,7 +896,14 @@ async function publicarUm(job, b, ctx) {
 
       etapa("Publicando descrição");
       try {
-        await mlApi(`/items/${item.id}/description`, token, { method: "POST", body: JSON.stringify({ plain_text: p.descricaoTexto }) });
+        const corpoDesc = JSON.stringify({ plain_text: p.descricaoTexto });
+        try {
+          await mlApi(`/items/${item.id}/description`, token, { method: "POST", body: corpoDesc });
+        } catch (e) {
+          // item que ja tem descricao recusa POST com "use PUT instead"
+          if (!/already has a description|description.invalid/i.test(e.message)) throw e;
+          await mlApi(`/items/${item.id}/description`, token, { method: "PUT", body: corpoDesc });
+        }
       } catch (e) { out.avisos.push("Descrição do ML: " + e.message.slice(0, 140)); }
 
       etapa("Mercado Livre pronto");
@@ -874,4 +951,4 @@ app.get("/api/status", async (_, res) => {
 
 app.listen(PORT, () => console.log(`anunciador em ${BASE_URL}`));
 // expostos para scripts/teste-ml.mjs — nao muda o comportamento do app
-export { validarCategoria, detalhesCategoria, preencherAtributosComIA, resolverAtributos, valorPorTexto, valorPadrao, chamarIA, extrairJSON };
+export { validarCategoria, detalhesCategoria, preencherAtributosComIA, resolverAtributos, valorPorTexto, valorPadrao, gtinValido, comoEnviar, chamarIA, extrairJSON };

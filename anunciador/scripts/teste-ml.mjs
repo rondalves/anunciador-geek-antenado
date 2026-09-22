@@ -5,7 +5,7 @@ process.env.PORT = process.env.PORT || "0";
 delete process.env.GEMINI_API_KEY;      // forca o cenario "IA fora do ar"
 delete process.env.ANTHROPIC_API_KEY;
 
-const { validarCategoria, detalhesCategoria, resolverAtributos, valorPorTexto, valorPadrao }
+const { validarCategoria, detalhesCategoria, resolverAtributos, valorPorTexto, valorPadrao, gtinValido, comoEnviar }
   = await import("../server.js");
 
 const T = "TOKEN_PUBLICO"; // /categories/* do ML dispensa auth
@@ -69,6 +69,31 @@ ok("categoria sem obrigatorios nao trava", r4.faltam.length === 0 && r4.resolvid
 const r5 = await resolverAtributos(T, "MLB1055", produto, []); // Celulares: exige Anatel etc
 ok("categoria impossivel reporta o que falta em vez de publicar torto",
   r5.faltam.length > 0, "faltam: " + r5.faltam.map(a => a.nome).join(", "));
+
+/* ---------- GTIN: checksum antes de gastar chamada ---------- */
+ok("EAN-13 real e aceito (7891000053508)", gtinValido("7891000053508"));
+ok("EAN-13 com digito trocado e recusado", !gtinValido("7891000053509"));
+ok("UPC-A de 12 digitos e aceito (036000291452)", gtinValido("036000291452"));
+ok("EAN com traco e limpo antes de conferir", gtinValido("789-1000-053508"));
+ok("tamanho invalido e recusado", !gtinValido("12345"));
+ok("vazio e recusado", !gtinValido(""));
+
+/* ---------- value_type: o ML recusa value_id em number_unit e boolean ---------- */
+const fLista = { id: "COLOR", tipo: "string", valores: [] };
+const fNum = { id: "RAM", tipo: "number_unit", valores: [] };
+const fBool = { id: "IS_DUAL_SIM", tipo: "boolean", valores: [] };
+ok("lista fechada vai por value_id", comoEnviar(fLista, { id: "9", nome: "Preto" }).value_id === "9");
+ok("number_unit vai por value_name, sem value_id",
+  comoEnviar(fNum, { id: "1", nome: "8 GB" }).value_name === "8 GB" && !comoEnviar(fNum, { id: "1", nome: "8 GB" }).value_id);
+ok("boolean vai por value_name, sem value_id",
+  comoEnviar(fBool, { id: "2", nome: "Sim" }).value_name === "Sim" && !comoEnviar(fBool, { id: "2", nome: "Sim" }).value_id);
+
+/* ---------- o VOLTAGE real precisa sair no formato que o ML aceita ---------- */
+ok("VOLTAGE (string com lista) sai com value_id", !!temValor(r1.resolvidos, "VOLTAGE")?.value_id);
+
+/* ---------- preview da tela nao pode gastar cota de IA ---------- */
+const prev = await resolverAtributos(T, "MLB11172", produto, [], { semIA: true });
+ok("preview resolve VOLTAGE sem chamar IA", !!temValor(prev.resolvidos, "VOLTAGE"), prev.origem.join(","));
 
 console.log(falhas ? `\n${falhas} teste(s) FALHARAM` : "\nTodos os testes passaram");
 process.exit(falhas ? 1 : 0);

@@ -84,6 +84,12 @@ button{font:inherit;font-weight:700;border-radius:12px;border:none;cursor:pointe
 
   <div class="check"><input type="checkbox" id="usado" checked><label for="usado" style="margin:0;color:var(--texto)">Produto usado (testes do canal)</label></div>
 
+  <div id="blocoML" hidden>
+    <label>Mercado Livre <span id="catML" style="color:var(--suave);font-weight:400"></span></label>
+    <div id="atributosML"></div>
+    <div class="dica" id="dicaML"></div>
+  </div>
+
   <button class="anunciar" id="btAnunciar">Anunciar</button>
 </div>
 
@@ -116,6 +122,53 @@ fetch("/api/status").then(r => r.json()).then(s => {
     (s.driveConectar ? ' <a href="/auth/google" style="font-weight:700">→ conectar Google (necessário pra baixar fotos)</a>' : "");
   if (s.pastaPadrao) $("pasta").value = s.pastaPadrao;
 });
+
+let atributosML = [], categoriaML = "";
+
+// ao sair do nome do produto, mostra em que categoria vai cair e o que o ML exige
+async function preverML() {
+  const nome = $("titulo").value.trim();
+  if (!nome) return;
+  $("blocoML").hidden = false;
+  $("catML").textContent = "— consultando categoria…";
+  $("atributosML").innerHTML = ""; $("dicaML").textContent = "";
+  try {
+    const j = await (await fetch(`/api/ml/preview?nome=${encodeURIComponent(nome)}`)).json();
+    if (!j.ok) throw new Error(j.erro);
+    categoriaML = j.categoria.id;
+    atributosML = j.atributos;
+    $("catML").textContent = `— ${j.categoria.nome}`;
+    if (!atributosML.length) {
+      $("dicaML").textContent = "Essa categoria não exige nada além de marca, modelo e EAN.";
+      return;
+    }
+    $("atributosML").innerHTML = atributosML.map(a => {
+      const rotulo = `<label for="at_${a.id}">${a.nome}</label>`;
+      if (a.valores.length) {
+        const ops = a.valores.map(v =>
+          `<option value="${v.id}"${String(v.id) === String(a.sugerido) ? " selected" : ""}>${v.nome}</option>`).join("");
+        return rotulo + `<select id="at_${a.id}" data-attr="${a.id}" data-tipo="${a.tipo}"><option value="">— escolha —</option>${ops}</select>`;
+      }
+      return rotulo + `<input id="at_${a.id}" data-attr="${a.id}" data-tipo="${a.tipo}" value="${a.sugerido || ""}" placeholder="${a.tipo === "number_unit" ? "ex.: 128 GB" : ""}">`;
+    }).join("");
+    const auto = atributosML.filter(a => a.origem).map(a => `${a.nome} (${a.origem})`);
+    $("dicaML").innerHTML = auto.length
+      ? `Preenchi sozinho: <b>${auto.join(", ")}</b>. Confira antes de anunciar.`
+      : "Escolha os valores — sem eles o Mercado Livre recusa o anúncio.";
+  } catch (e) {
+    $("catML").textContent = "";
+    $("dicaML").innerHTML = `<span class="ruim">Categoria do ML: ${e.message}</span>`;
+  }
+}
+$("titulo").addEventListener("blur", preverML);
+
+function coletarAtributosML() {
+  return [...document.querySelectorAll("#atributosML [data-attr]")]
+    .filter(el => el.value.trim())
+    .map(el => el.tagName === "SELECT" && el.dataset.tipo !== "number_unit" && el.dataset.tipo !== "boolean"
+      ? { id: el.dataset.attr, value_id: el.value }
+      : { id: el.dataset.attr, value_name: (el.selectedOptions ? el.selectedOptions[0].textContent : el.value).trim() });
+}
 
 async function anunciar() {
   avisoIA = "";
@@ -154,11 +207,11 @@ async function anunciar() {
 
     const corpo = {
       produtos: [{
-        titulo, tituloML, marca, modelo, categoria: "", categoriaML: "",
+        titulo, tituloML, marca, modelo, categoria: "", categoriaML,
         ean: $("ean").value, estoque: 1,
         precoShopify: precoShopify || undefined, precoML: precoML || undefined,
         usado: $("usado").checked, intro, fechamento, destaques,
-        tags: [], fotos, atributosML: [],
+        tags: [], fotos, atributosML: coletarAtributosML(),
         garantiaTipo: "Garantia do vendedor", garantiaTempo: "30 dias", freteGratis: false,
         shopify: precoShopify > 0, ml: precoML > 0
       }]
