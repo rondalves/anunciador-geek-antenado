@@ -27,14 +27,28 @@ a{color:var(--ciano)}
 .cartao{background:var(--painel);border:1px solid var(--linha);border-radius:16px;padding:26px;width:100%;max-width:480px}
 label{display:block;font-size:12.5px;color:var(--suave);margin:16px 0 6px}
 label:first-child{margin-top:0}
-input{width:100%;background:#0a0c10;border:1px solid var(--linha);color:var(--texto);
-  border-radius:10px;padding:13px 14px;font:inherit;font-size:16px}
-input:focus{outline:none;border-color:var(--ciano);box-shadow:0 0 0 3px rgba(46,230,214,.15)}
+input:not([type=checkbox]),select{width:100%;background:#0a0c10;border:1px solid var(--linha);color:var(--texto);
+  border-radius:10px;padding:13px 14px;font:inherit;font-size:16px;appearance:none}
+input[type=checkbox]{width:18px;height:18px;accent-color:var(--ciano);cursor:pointer}
+select{background-image:linear-gradient(45deg,transparent 50%,var(--suave) 50%),linear-gradient(135deg,var(--suave) 50%,transparent 50%);
+  background-position:calc(100% - 19px) calc(50% + 2px),calc(100% - 14px) calc(50% + 2px);
+  background-size:5px 5px,5px 5px;background-repeat:no-repeat;padding-right:38px;cursor:pointer}
+input:focus,select:focus{outline:none;border-color:var(--ciano);box-shadow:0 0 0 3px rgba(46,230,214,.15)}
+
+/* bloco do Mercado Livre */
+#blocoML{margin-top:20px;padding-top:18px;border-top:1px solid var(--linha)}
+#blocoML.carregando{opacity:.5}
+.tituloML{display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--suave);margin-bottom:10px}
+.selo{background:rgba(46,230,214,.12);color:var(--ciano);border-radius:6px;padding:2px 8px;
+  font-size:11.5px;font-weight:600;letter-spacing:.01em}
+.campoML label{margin-top:12px}
+.campoML:first-child label{margin-top:0}
+.auto{color:var(--verde);font-size:11px;font-weight:600;margin-left:6px}
 .duo{display:grid;grid-template-columns:1fr 1fr;gap:12px}
 .precoLinha{position:relative}
-.precoLinha span{position:absolute;left:14px;top:50%;transform:translateY(-1px);color:var(--suave);
-  font-size:16px;pointer-events:none}
-.precoLinha input{padding-left:38px}
+.precoLinha span{position:absolute;left:14px;top:50%;transform:translateY(-50%);color:var(--suave);
+  font-size:13px;pointer-events:none;font-weight:600}
+.precoLinha input{padding-left:74px;text-align:right}
 .dica{font-size:12px;color:var(--suave);margin-top:6px}
 .check{display:flex;align-items:center;gap:9px;margin:18px 0 4px;font-size:14.5px}
 .check input{width:auto}
@@ -55,6 +69,9 @@ button{font:inherit;font-weight:700;border-radius:12px;border:none;cursor:pointe
 .passos{margin-top:14px;font-size:13px;max-height:200px;overflow:auto}
 .passos div{padding:3px 0;color:var(--suave)}
 .passos div.erro{color:var(--erro)}
+#final b{font-size:15px}
+#final .linha{padding:7px 0;border-top:1px solid var(--linha)}
+#final .linha:first-child{border-top:none}
 .rodapeModal{display:flex;gap:10px;justify-content:flex-end;margin-top:18px}
 .rodapeModal button{padding:11px 18px;background:#20252c;color:var(--texto)}
 .rodapeModal button.acao{background:var(--amarelo);color:#15181d}
@@ -77,15 +94,19 @@ button{font:inherit;font-weight:700;border-radius:12px;border:none;cursor:pointe
 
   <label>Preço</label>
   <div class="duo">
-    <div class="precoLinha"><span>Shopify R$</span><input id="precoShopify" type="number" step="0.01" placeholder="0,00" style="padding-left:78px"></div>
-    <div class="precoLinha"><span>ML R$</span><input id="precoML" type="number" step="0.01" placeholder="0,00" style="padding-left:52px"></div>
+    <div class="precoLinha"><span>Shopify</span><input id="precoShopify" type="number" step="0.01" placeholder="0,00"></div>
+    <div class="precoLinha"><span>ML</span><input id="precoML" type="number" step="0.01" placeholder="0,00"></div>
   </div>
   <div class="dica">Deixe um dos dois em branco para anunciar só na outra plataforma.</div>
 
   <div class="check"><input type="checkbox" id="usado" checked><label for="usado" style="margin:0;color:var(--texto)">Produto usado (testes do canal)</label></div>
 
   <div id="blocoML" hidden>
-    <label>Mercado Livre <span id="catML" style="color:var(--suave);font-weight:400"></span></label>
+    <div class="tituloML"><span class="selo">Mercado Livre</span><span id="catML"></span></div>
+    <div id="trocaCat" hidden>
+      <label for="selCat">Categoria</label>
+      <select id="selCat"></select>
+    </div>
     <div id="atributosML"></div>
     <div class="dica" id="dicaML"></div>
   </div>
@@ -126,41 +147,54 @@ fetch("/api/status").then(r => r.json()).then(s => {
 let atributosML = [], categoriaML = "";
 
 // ao sair do nome do produto, mostra em que categoria vai cair e o que o ML exige
-async function preverML() {
+async function preverML(categoriaEscolhida) {
   const nome = $("titulo").value.trim();
   if (!nome) return;
   $("blocoML").hidden = false;
-  $("catML").textContent = "— consultando categoria…";
-  $("atributosML").innerHTML = ""; $("dicaML").textContent = "";
+  $("blocoML").classList.add("carregando");
+  $("catML").textContent = "consultando categoria…";
+  $("dicaML").textContent = "";
   try {
-    const j = await (await fetch(`/api/ml/preview?nome=${encodeURIComponent(nome)}`)).json();
+    const j = await (await fetch(`/api/ml/preview?nome=${encodeURIComponent(nome)}` +
+      (categoriaEscolhida ? `&categoria=${encodeURIComponent(categoriaEscolhida)}` : ""))).json();
     if (!j.ok) throw new Error(j.erro);
     categoriaML = j.categoria.id;
     atributosML = j.atributos;
-    $("catML").textContent = `— ${j.categoria.nome}`;
+    $("catML").textContent = j.categoria.nome;
+
+    // a deteccao de categoria do ML erra bastante — deixa trocar sem sair da tela
+    if (j.alternativas && j.alternativas.length) {
+      $("trocaCat").hidden = false;
+      $("selCat").innerHTML = [j.categoria, ...j.alternativas]
+        .map((c, i) => `<option value="${c.id}"${i ? "" : " selected"}>${c.nome}</option>`).join("");
+      $("selCat").onchange = () => preverML($("selCat").value);
+    } else $("trocaCat").hidden = true;
+
     if (!atributosML.length) {
-      $("dicaML").textContent = "Essa categoria não exige nada além de marca, modelo e EAN.";
+      $("atributosML").innerHTML = "";
+      $("dicaML").textContent = "Essa categoria nao exige nada alem de marca, modelo e EAN.";
       return;
     }
     $("atributosML").innerHTML = atributosML.map(a => {
-      const rotulo = `<label for="at_${a.id}">${a.nome}</label>`;
+      const marca = a.origem ? `<span class="auto">preenchido (${a.origem})</span>` : "";
+      const rotulo = `<label for="at_${a.id}">${a.nome}${marca}</label>`;
       if (a.valores.length) {
         const ops = a.valores.map(v =>
           `<option value="${v.id}"${String(v.id) === String(a.sugerido) ? " selected" : ""}>${v.nome}</option>`).join("");
-        return rotulo + `<select id="at_${a.id}" data-attr="${a.id}" data-tipo="${a.tipo}"><option value="">— escolha —</option>${ops}</select>`;
+        return `<div class="campoML">${rotulo}<select id="at_${a.id}" data-attr="${a.id}" data-tipo="${a.tipo}"><option value="">— escolha —</option>${ops}</select></div>`;
       }
-      return rotulo + `<input id="at_${a.id}" data-attr="${a.id}" data-tipo="${a.tipo}" value="${a.sugerido || ""}" placeholder="${a.tipo === "number_unit" ? "ex.: 128 GB" : ""}">`;
+      return `<div class="campoML">${rotulo}<input id="at_${a.id}" data-attr="${a.id}" data-tipo="${a.tipo}" value="${a.sugerido || ""}" placeholder="${a.tipo === "number_unit" ? "ex.: 128 GB" : ""}"></div>`;
     }).join("");
-    const auto = atributosML.filter(a => a.origem).map(a => `${a.nome} (${a.origem})`);
-    $("dicaML").innerHTML = auto.length
-      ? `Preenchi sozinho: <b>${auto.join(", ")}</b>. Confira antes de anunciar.`
-      : "Escolha os valores — sem eles o Mercado Livre recusa o anúncio.";
+    const vazios = atributosML.filter(a => !a.sugerido).length;
+    $("dicaML").innerHTML = vazios
+      ? `<span class="ruim">Escolha ${vazios} campo(s)</span> — sem isso o Mercado Livre recusa o anuncio.`
+      : "Tudo pronto. Confira os valores e clique em Anunciar.";
   } catch (e) {
     $("catML").textContent = "";
-    $("dicaML").innerHTML = `<span class="ruim">Categoria do ML: ${e.message}</span>`;
-  }
+    $("dicaML").innerHTML = `<span class="ruim">${e.message}</span>`;
+  } finally { $("blocoML").classList.remove("carregando"); }
 }
-$("titulo").addEventListener("blur", preverML);
+$("titulo").addEventListener("blur", () => preverML());
 
 function coletarAtributosML() {
   return [...document.querySelectorAll("#atributosML [data-attr]")]
@@ -178,6 +212,13 @@ async function anunciar() {
   if (!titulo) return alert("Falta o nome do produto.");
   if (!precoShopify && !precoML) return alert("Preencha o preço de pelo menos uma plataforma.");
   if (!$("pasta").value.trim()) return alert("Falta a pasta de fotos.");
+  // barra aqui em vez de deixar o ML recusar depois de subir todas as fotos
+  if (precoML > 0 && atributosML.length) {
+    const preenchidos = new Set(coletarAtributosML().map(a => a.id));
+    const vazios = atributosML.filter(a => !preenchidos.has(a.id)).map(a => a.nome);
+    if (vazios.length) return alert(`O Mercado Livre exige: ${vazios.join(", ")}.
+Preencha antes de anunciar.`);
+  }
 
   const b = $("btAnunciar"); b.disabled = true; b.textContent = "Buscando fotos…";
   $("modal").classList.add("ver");
@@ -254,8 +295,8 @@ function acaoParaErro(msg) {
     return ` <a href="/auth/ml" target="_blank" style="font-weight:700">→ Clique aqui pra reconectar o Mercado Livre</a>`;
   if (/drive recusou|auth\/google/i.test(msg))
     return ` <a href="/auth/google" target="_blank" style="font-weight:700">→ Clique aqui pra conectar o Google com login (resolve download de foto)</a>`;
-  if (/anthropic|ia não devolveu/i.test(msg))
-    return ` <span class="dica">Configure ANTHROPIC_API_KEY no .env do EasyPanel pra ligar a descrição automática.</span>`;
+  if (/gemini|anthropic|ia não devolveu|quota|high demand/i.test(msg))
+    return ` <span class="dica">A descrição automática depende do Gemini. O anúncio sai do mesmo jeito com o texto básico — tente de novo em alguns minutos se quiser a descrição completa.</span>`;
   if (/nenhuma foto|sem fotos/i.test(msg))
     return ` <span class="dica">Confira se os arquivos na pasta do Drive estão nomeados como "${$("titulo").value} (1).jpg", "(2).jpg"...</span>`;
   return "";
@@ -274,7 +315,7 @@ function finalizar(lista) {
     ? `<span class="bom">Mercado Livre ${r.ml.status}</span> — <a href="${r.ml.url}" target="_blank">ver anúncio</a> (${brl(r.precoML)})`
     : `<span class="ruim">Mercado Livre:</span> ${r.ml.erro}${acaoParaErro(r.ml.erro)}`);
   (r.avisos || []).forEach(a => l.push(`<span class="dica">${a}</span>`));
-  $("final").innerHTML = l.join("<br>"); $("final").hidden = false; $("rodapeModal").hidden = false;
+  $("final").innerHTML = l.map(x => `<div class="linha">${x}</div>`).join(""); $("final").hidden = false; $("rodapeModal").hidden = false;
   $("btAnunciar").disabled = false; $("btAnunciar").textContent = "Anunciar";
   historico();
 }
@@ -282,6 +323,8 @@ function finalizar(lista) {
 const fecharModal = () => $("modal").classList.remove("ver");
 function novoAnuncio() {
   ["titulo", "ean", "precoShopify", "precoML"].forEach(i => $(i).value = "");
+  $("blocoML").hidden = true; $("atributosML").innerHTML = ""; $("trocaCat").hidden = true;
+  atributosML = []; categoriaML = "";
   fecharModal(); $("titulo").focus();
 }
 

@@ -302,6 +302,20 @@ async function mlCategorias(token, texto) {
   return lista;
 }
 
+// contas com a tag user_product_seller mandam family_name em vez de title.
+// É fixo por conta, então pergunta uma vez e guarda.
+let contaUsaFamilyName = null;
+async function usaFamilyName(token) {
+  if (contaUsaFamilyName === null) {
+    try {
+      const me = await mlApi("/users/me", token);
+      contaUsaFamilyName = (me.tags || []).includes("user_product_seller");
+      console.log(`[ML] conta ${contaUsaFamilyName ? "usa family_name" : "usa title"}`);
+    } catch { contaUsaFamilyName = true; } // no escuro, mantém o comportamento que já rodava
+  }
+  return contaUsaFamilyName;
+}
+
 // o ML só aceita anúncio em categoria FOLHA que permita publicar — categoria de galho é recusada
 async function validarCategoria(token, id, texto) {
   const folhaOk = async (cid) => {
@@ -579,8 +593,14 @@ app.get("/api/ml/preview", async (req, res) => {
     const produto = { titulo: nome, tituloML: nome, descricaoTexto: "" };
     const { resolvidos, origem } = await resolverAtributos(token, cat.id, produto, [], { semIA: true });
     const escolhido = new Map(resolvidos.map(a => [a.id, a]));
+    // a busca de categoria do ML erra com frequência quando o nome do produto tem palavra
+    // que colide com outro domínio — mostrar as alternativas deixa o acerto na mão de quem sabe
+    const alternativas = [];
+    for (const s of await mlCategorias(token, nome)) {
+      if (s.id !== cat.id && !alternativas.some(a => a.id === s.id)) alternativas.push(s);
+    }
     res.json({
-      ok: true, categoria: cat,
+      ok: true, categoria: cat, alternativas: alternativas.slice(0, 5),
       atributos: atributos.filter(a => a.obrigatorio).map(a => ({
         id: a.id, nome: a.nome, tipo: a.tipo,
         valores: a.valores,
@@ -886,12 +906,20 @@ async function publicarUm(job, b, ctx) {
           { id: "WARRANTY_TIME", value_name: b.garantiaTempo || "30 dias" }
         ]
       };
+      // conta com a tag user_product_seller usa family_name (o ML monta o título sozinho);
+      // as demais usam title. Perguntar uma vez evita a criação falhar e ser refeita.
+      const nomeItem = await usaFamilyName(token)
+        ? { family_name: p.tituloML }
+        : { title: p.tituloML };
       let item;
       try {
-        item = await mlApi("/items", token, { method: "POST", body: JSON.stringify({ family_name: p.tituloML, ...corpo }) });
+        item = await mlApi("/items", token, { method: "POST", body: JSON.stringify({ ...nomeItem, ...corpo }) });
       } catch (e) {
-        out.avisos.push("family_name recusado, usei title — " + e.message.slice(0, 140));
-        item = await mlApi("/items", token, { method: "POST", body: JSON.stringify({ title: p.tituloML, ...corpo }) });
+        // se a leitura da conta enganou, tenta pelo outro campo antes de desistir
+        const alternativo = nomeItem.family_name ? { title: p.tituloML } : { family_name: p.tituloML };
+        if (!/family_name|title/i.test(e.message)) throw e;
+        out.avisos.push(`O ML recusou ${Object.keys(nomeItem)[0]}, refiz com ${Object.keys(alternativo)[0]}`);
+        item = await mlApi("/items", token, { method: "POST", body: JSON.stringify({ ...alternativo, ...corpo }) });
       }
 
       etapa("Publicando descrição");
