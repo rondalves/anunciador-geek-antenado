@@ -1,47 +1,74 @@
-// Confere, contra as APIs reais, o que costuma quebrar a publicacao no Mercado Livre.
-// Rode antes de subir pra VPS:  node --env-file=.env scripts/teste-ml.mjs
-// Nao precisa de credencial do ML: /categories/* e publico. A parte de IA usa a GEMINI_API_KEY
-// e aparece como PULADO se a cota do tier gratuito estiver esgotada no momento.
-process.env.PORT = process.env.PORT || "0"; // importar o server.js sobe o listen
+// Confere, contra as APIs reais do Mercado Livre, tudo que costuma barrar a publicacao.
+// Roda SEM chave de IA de proposito: o caminho critico nao pode depender do Gemini.
+//   node scripts/teste-ml.mjs
+process.env.PORT = process.env.PORT || "0";
+delete process.env.GEMINI_API_KEY;      // forca o cenario "IA fora do ar"
+delete process.env.ANTHROPIC_API_KEY;
 
-const { validarCategoria, detalhesCategoria, chamarIA, extrairJSON } = await import("../server.js");
+const { validarCategoria, detalhesCategoria, resolverAtributos, valorPorTexto, valorPadrao }
+  = await import("../server.js");
 
-const CAT = "MLB11172";          // Consoles — exige VOLTAGE
-const TOKEN = "TOKEN_PUBLICO";   // endpoints de categoria do ML dispensam auth
+const T = "TOKEN_PUBLICO"; // /categories/* do ML dispensa auth
 let falhas = 0;
 const ok = (nome, cond, detalhe = "") => {
   console.log(`${cond ? "PASSOU" : "FALHOU"}  ${nome}${detalhe ? " — " + detalhe : ""}`);
   if (!cond) falhas++;
 };
+const temValor = (attrs, id) => attrs.find(a => a.id === id);
 
-const folha = await validarCategoria(TOKEN, CAT, "Console Sony PlayStation 5 Slim");
-ok("categoria folha valida e mantida", folha?.id === CAT, JSON.stringify(folha));
+/* ---------- categoria ---------- */
+const folha = await validarCategoria(T, "MLB11172", "Console PlayStation 5");
+ok("categoria folha valida e mantida", folha?.id === "MLB11172", JSON.stringify(folha));
+ok("categoria de galho e recusada", (await validarCategoria(T, "MLB1000", "x"))?.id !== "MLB1000");
+ok("categoria inexistente nao explode", (await validarCategoria(T, "MLB_NAO_EXISTE", "")) === null);
 
-const galho = await validarCategoria(TOKEN, "MLB1000", "Console Sony PlayStation 5 Slim");
-ok("categoria de galho e recusada", galho?.id !== "MLB1000", JSON.stringify(galho));
+/* ---------- casamento por texto ---------- */
+const det = await detalhesCategoria(T, "MLB11172");
+const volt = det.atributos.find(a => a.id === "VOLTAGE");
+ok("VOLTAGE segue obrigatorio em MLB11172", !!volt?.obrigatorio, det.atributos.map(a => a.id).join(","));
+ok("texto '110/220 bivolt' casa com 127/220V", valorPorTexto(volt, "console bivolt")?.nome === "127/220V",
+  valorPorTexto(volt, "console bivolt")?.nome);
+ok("texto '127V' casa exato", valorPorTexto(volt, "fonte 127V")?.nome === "127V", valorPorTexto(volt, "fonte 127V")?.nome);
+// a armadilha: "127/220V" contem "220V", entao a ordem por tamanho importa
+ok("'127/220V' nao e confundido com '220V'", valorPorTexto(volt, "fonte 127/220V")?.nome === "127/220V",
+  valorPorTexto(volt, "fonte 127/220V")?.nome);
+ok("texto sem voltagem nao inventa valor", valorPorTexto(volt, "console retro 64gb") === null);
+ok("texto '110V' casa com 127V (mesma rede no Brasil)",
+  valorPorTexto(volt, "fonte 110v")?.nome === "127V", valorPorTexto(volt, "fonte 110v")?.nome);
+ok("texto '100-240V' casa com bivolt",
+  valorPorTexto(volt, "fonte 100-240v")?.nome === "127/220V", valorPorTexto(volt, "fonte 100-240v")?.nome);
+ok("padrao de VOLTAGE e bivolt", valorPadrao(volt)?.nome === "127/220V", valorPadrao(volt)?.nome);
 
-const det = await detalhesCategoria(TOKEN, CAT);
-ok("VOLTAGE aparece como obrigatorio", det.atributos.some(a => a.id === "VOLTAGE" && a.obrigatorio),
-  det.atributos.map(a => `${a.id}${a.obrigatorio ? "*" : ""}`).join(", "));
+/* ---------- o caso que quebrou de verdade, SEM IA ---------- */
+const produto = {
+  titulo: "VIDEO GAME PORTATIL RETRO ANBERNIC RG35XX H TELA IPS 3.5 DUPLO ANALOGICO WI-FI BLUETOOTH HDMI 64GB",
+  tituloML: "Video Game Portatil Retro Anbernic RG35XX H 64GB",
+  marca: "Anbernic", modelo: "RG35XX H", descricaoTexto: "Console portatil usado, sem marcas de uso."
+};
+const r1 = await resolverAtributos(T, "MLB11172", produto, []);
+const v1 = temValor(r1.resolvidos, "VOLTAGE");
+ok("SEM IA: VOLTAGE resolvido mesmo assim", !!v1, JSON.stringify(v1));
+ok("SEM IA: value_id existe na lista do ML", !!v1 && volt.valores.some(x => x.id === v1.value_id), v1?.value_name);
+ok("SEM IA: nada fica faltando", r1.faltam.length === 0, r1.faltam.map(a => a.nome).join(","));
+console.log("       origem:", r1.origem.join(", "));
 
-// a IA tem que escolher um dos valores fechados da categoria, nao inventar texto
-const faltando = det.atributos.filter(a => a.obrigatorio);
-const prompt = `Produto: Console Sony PlayStation 5 Slim 1TB. Marca: Sony. Modelo: PlayStation 5 Slim.
-Preencha estes atributos obrigatórios do Mercado Livre:
-${faltando.map(a => `- ${a.nome} (id ${a.id}): opções [${a.valores.map(v => `${v.id}="${v.nome}"`).join(", ")}]`).join("\n")}
-Responda SÓ com JSON entre ===INICIO_JSON=== e ===FIM_JSON===, no formato {"ID_DO_ATRIBUTO":"valor_ou_id"}.`;
-try {
-  const valores = extrairJSON(await chamarIA(prompt));
-  const v = valores.VOLTAGE;
-  const bate = det.atributos.find(a => a.id === "VOLTAGE").valores.some(x => x.id === v || x.nome === v);
-  ok("IA devolve VOLTAGE valido da lista do ML", bate, JSON.stringify(v));
-} catch (e) {
-  const cota = /quota|high demand|rate limit|unavailable/i.test(e.message);
-  console.log(cota
-    ? "PULADO  IA sem cota agora — o codigo esta ok, teste de novo mais tarde ou na VPS"
-    : `FALHOU  IA — ${e.message.slice(0, 200)}`);
-  if (!cota) falhas++;
-}
+/* ---------- titulo com voltagem explicita vence o padrao ---------- */
+const r2 = await resolverAtributos(T, "MLB11172", { ...produto, tituloML: produto.tituloML + " 220V" }, []);
+ok("voltagem no titulo tem prioridade sobre o padrao",
+  temValor(r2.resolvidos, "VOLTAGE")?.value_name === "220V", temValor(r2.resolvidos, "VOLTAGE")?.value_name);
 
-console.log(falhas ? `\n${falhas} teste(s) falharam` : "\nTudo que da pra testar aqui passou");
+/* ---------- valor vindo do formulario nao e sobrescrito ---------- */
+const r3 = await resolverAtributos(T, "MLB11172", produto, [{ id: "VOLTAGE", value_id: volt.valores[0].id }]);
+ok("valor do formulario nao e sobrescrito", !temValor(r3.resolvidos, "VOLTAGE"), JSON.stringify(r3.origem));
+
+/* ---------- categoria sem atributos obrigatorios ---------- */
+const r4 = await resolverAtributos(T, "MLB438563", produto, []);
+ok("categoria sem obrigatorios nao trava", r4.faltam.length === 0 && r4.resolvidos.length === 0);
+
+/* ---------- categoria que exige o que nao da pra adivinhar ---------- */
+const r5 = await resolverAtributos(T, "MLB1055", produto, []); // Celulares: exige Anatel etc
+ok("categoria impossivel reporta o que falta em vez de publicar torto",
+  r5.faltam.length > 0, "faltam: " + r5.faltam.map(a => a.nome).join(", "));
+
+console.log(falhas ? `\n${falhas} teste(s) FALHARAM` : "\nTodos os testes passaram");
 process.exit(falhas ? 1 : 0);

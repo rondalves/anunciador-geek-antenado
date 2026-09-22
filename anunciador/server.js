@@ -420,6 +420,79 @@ function extrairJSON(texto) {
   catch { throw new Error("JSON da IA veio malformado: " + bruto.slice(0, 200)); }
 }
 
+const normTxt = (s) => String(s || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
+
+// como as pessoas escrevem no título vs. como o ML nomeia o valor
+// [regex no título, regex no nome do valor do ML]
+const SINONIMOS = {
+  VOLTAGE: [
+    [/bivolt|110\s*\/\s*220|127\s*\/\s*220|100\s*-\s*240/, /127\s*\/\s*220/],
+    [/\b110\s*v\b/, /127\s*v/]  // 110V e 127V são a mesma rede no Brasil
+  ]
+};
+
+// acha na lista fechada do ML um valor que já aparece no texto do produto.
+// do nome mais longo pro mais curto, senão "220V" ganharia de "127/220V".
+function valorPorTexto(attr, texto) {
+  const t = normTxt(texto);
+  if (!t) return null;
+  const literal = [...attr.valores].sort((a, b) => b.nome.length - a.nome.length)
+    .find(v => v.nome.length >= 2 && t.includes(normTxt(v.nome)));
+  if (literal) return literal;
+  for (const [noTitulo, noValor] of SINONIMOS[attr.id] || []) {
+    if (noTitulo.test(t)) {
+      const achou = attr.valores.find(v => noValor.test(normTxt(v.nome)));
+      if (achou) return achou;
+    }
+  }
+  return null;
+}
+
+// Conferido em 21/09/2026 nas categorias que o canal usa: o ML NÃO oferece opção
+// "não especificado" em nenhuma delas, então o último recurso precisa ser um valor
+// real. Bivolt cobre praticamente todo eletrônico moderno (fonte chaveada).
+const PADRAO_ATRIBUTO = { VOLTAGE: /127\s*\/\s*220|bivolt/i };
+const valorPadrao = (attr) => {
+  const re = PADRAO_ATRIBUTO[attr.id];
+  return re ? attr.valores.find(v => re.test(v.nome)) || null : null;
+};
+
+// Resolve os atributos obrigatórios da categoria em cascata, da fonte mais confiável
+// para a menos: formulário > texto do produto > IA > padrão conhecido.
+// A IA é um degrau opcional — se estiver fora do ar, os outros ainda entregam.
+async function resolverAtributos(token, categoria, produto, jaTem = []) {
+  const { atributos } = await detalhesCategoria(token, categoria);
+  const preenchidos = new Set(jaTem.filter(a => a.value_id || a.value_name).map(a => a.id));
+  const obrigatorios = atributos.filter(a => a.obrigatorio && !preenchidos.has(a.id));
+  const resolvidos = [], origem = [], faltam = [];
+  if (!obrigatorios.length) return { resolvidos, origem, faltam, erroIA: "" };
+
+  const texto = [produto.tituloML, produto.titulo, produto.descricaoTexto].filter(Boolean).join(" ");
+  const restantes = [];
+  for (const a of obrigatorios) {
+    const v = a.valores.length ? valorPorTexto(a, texto) : null;
+    if (v) { resolvidos.push({ id: a.id, value_id: v.id, value_name: v.nome }); origem.push(`${a.id}=título`); }
+    else restantes.push(a);
+  }
+
+  let erroIA = "";
+  if (restantes.length && (GEMINI_KEY || ANTHROPIC_KEY)) {
+    try {
+      for (const at of await preencherAtributosComIA(produto.tituloML, produto.marca, produto.modelo, restantes)) {
+        resolvidos.push(at); origem.push(`${at.id}=IA`);
+      }
+    } catch (e) { erroIA = e.message; }
+  }
+
+  for (const a of restantes) {
+    if (resolvidos.some(r => r.id === a.id)) continue;
+    const v = valorPadrao(a);
+    if (v) { resolvidos.push({ id: a.id, value_id: v.id, value_name: v.nome }); origem.push(`${a.id}=padrão`); }
+    else faltam.push(a);
+  }
+  return { resolvidos, origem, faltam, erroIA };
+}
+
 async function preencherAtributosComIA(tituloML, marca, modelo, atributos) {
   const faltando = atributos.filter(a => a.obrigatorio);
   if (!faltando.length || (!GEMINI_KEY && !ANTHROPIC_KEY)) return [];
@@ -705,12 +778,17 @@ async function publicarUm(job, b, ctx) {
       if (categoria !== b.categoriaML) out.avisos.push(`Categoria escolhida automaticamente: ${cat.nome} (${categoria})`);
 
       etapa("Conferindo atributos obrigatórios da categoria");
-      let atributosIA = [];
-      try {
-        const det = await detalhesCategoria(token, categoria);
-        atributosIA = await preencherAtributosComIA(p.tituloML, p.marca, p.modelo, det.atributos);
-        if (atributosIA.length) out.avisos.push(`Atributos preenchidos automaticamente: ${atributosIA.map(a => a.id).join(", ")} (modelo ${geminiModeloOk || MODELO})`);
-      } catch (e) { out.avisos.push("Atributos da categoria: " + e.message.slice(0, 300)); }
+      const { resolvidos: atributosIA, origem, faltam, erroIA } =
+        await resolverAtributos(token, categoria, p, b.atributosML || []);
+      if (origem.length) out.avisos.push(`Atributos preenchidos: ${origem.join(", ")}`);
+      if (erroIA) out.avisos.push("IA indisponível (resolvido sem ela): " + erroIA.slice(0, 200));
+      // sem esses valores o ML recusa de qualquer jeito — melhor parar aqui do que
+      // depois de subir todas as fotos, e dizendo o que fazer para destravar
+      if (faltam.length) throw new Error(
+        `Faltam atributos obrigatórios de "${cat.nome}": ` +
+        faltam.map(a => a.valores.length
+          ? `${a.nome} (escolha uma opção e escreva no título: ${a.valores.slice(0, 6).map(v => v.nome).join(", ")})`
+          : `${a.nome} (texto livre — escreva no título)`).join("; "));
 
       const pictures = [];
       for (const [i, url] of fotos.entries()) {
@@ -796,4 +874,4 @@ app.get("/api/status", async (_, res) => {
 
 app.listen(PORT, () => console.log(`anunciador em ${BASE_URL}`));
 // expostos para scripts/teste-ml.mjs — nao muda o comportamento do app
-export { validarCategoria, detalhesCategoria, preencherAtributosComIA, chamarIA, extrairJSON };
+export { validarCategoria, detalhesCategoria, preencherAtributosComIA, resolverAtributos, valorPorTexto, valorPadrao, chamarIA, extrairJSON };
